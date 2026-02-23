@@ -31,6 +31,7 @@ async function callScript(action, payload = {}) {
 
 export const sheetsAPI = {
     getSheets: () => callScript('getSheets'),
+    getInitialData: () => callScript('getInitialData'),
     getSheetData: (sheetName) => callScript('getSheetData', { sheetName }),
     updateRow: (sheetName, rowIndex, isVerified, numberValue) => callScript('updateRow', { sheetName, rowIndex, isVerified, numberValue }),
 };
