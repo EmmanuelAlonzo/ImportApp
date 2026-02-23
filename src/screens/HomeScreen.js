@@ -185,12 +185,20 @@ export default function HomeScreen() {
 
         try {
             // 2. Espera síncrona a Google (Toma los 2-3 segundos solicitados por el usuario)
-            await sheetsAPI.updateRow(exactSheet, exactRow.rowIndex, isVerified, num);
+            const response = await sheetsAPI.updateRow(exactSheet, exactRow.rowIndex, isVerified, num);
+
+            if (!response || !response.updated) {
+                throw new Error("La API no confirmó la actualización.");
+            }
 
             // 3. ACTUALIZACIÓN VISUAL (Lote guardado)
+            // Extraemos la fila y el lote que REALMENTE se afectaron (importante si hubo concurrencia)
+            const actualRowIndex = response.rowIndex || exactRow.rowIndex;
+            const actualValueA = response.valueA || exactRow.valueA;
+
             const updatedSheetData = sheetData.map(item => {
-                if (item.rowIndex === exactRow.rowIndex) {
-                    return { ...item, isVerified: isVerified };
+                if (item.rowIndex === actualRowIndex) {
+                    return { ...item, isVerified: isVerified, valueA: actualValueA };
                 }
                 return item;
             });
@@ -202,13 +210,20 @@ export default function HomeScreen() {
                 [exactSheet]: updatedSheetData
             }));
 
-            // 4. Liberar el botón *inmediatamente* después del guardado (3 segundos), antes del background sync
+            // 4. Liberar el botón *inmediatamente* después del guardado (3 segundos)...
             setSaving(false);
 
-            showAlert(
-                "¡Éxito!",
-                `Se guardó correctamente.\n\nLote: ${exactRow.valueA || "Sin dato"}`
-            );
+            if (response.wasReassigned) {
+                showAlert(
+                    "🔄 ¡Auto-Reasignación!",
+                    `El registro que leíste ya había sido verificado por alguien más.\n\nTus datos se guardaron a salvo en el siguiente libre:\n\nLote: ${actualValueA || "Sin dato"}`
+                );
+            } else {
+                showAlert(
+                    "¡Éxito!",
+                    `Se guardó correctamente.\n\nLote: ${actualValueA || "Sin dato"}`
+                );
+            }
 
             // Transición a la siguiente fila
             handleSelectValueF(exactSearch, updatedSheetData);
