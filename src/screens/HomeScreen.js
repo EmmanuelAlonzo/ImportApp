@@ -213,17 +213,10 @@ export default function HomeScreen() {
             // 4. Liberar el botón *inmediatamente* después del guardado (3 segundos)...
             setSaving(false);
 
-            if (response.wasReassigned) {
-                showAlert(
-                    "🔄 ¡Auto-Reasignación!",
-                    `El registro que leíste ya había sido verificado por alguien más.\n\nTus datos se guardaron a salvo en el siguiente libre:\n\nLote: ${actualValueA || "Sin dato"}`
-                );
-            } else {
-                showAlert(
-                    "¡Éxito!",
-                    `Se guardó correctamente.\n\nLote: ${actualValueA || "Sin dato"}`
-                );
-            }
+            showAlert(
+                "¡Éxito!",
+                `Se guardó correctamente.\n\nLote: ${actualValueA || "Sin dato"}`
+            );
 
             // Transición a la siguiente fila
             handleSelectValueF(exactSearch, updatedSheetData);
