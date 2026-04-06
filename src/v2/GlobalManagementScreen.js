@@ -66,18 +66,31 @@ export default function GlobalManagementScreen() {
         try {
             const currentSheets = Array.isArray(config.active_sheets) ? config.active_sheets : (typeof config.active_sheets === 'string' ? JSON.parse(config.active_sheets) : []);
             const updatedSheets = [...currentSheets];
-            updatedSheets[index].visible = !currentVal;
-            await supabase.from('app_settings').update({ active_sheets: updatedSheets }).eq('id', 1);
+            
+            // Si el elemento es un string, lo convertimos a objeto para guardar el estado de visibilidad
+            if (typeof updatedSheets[index] === 'string') {
+                updatedSheets[index] = { name: updatedSheets[index], visible: !currentVal };
+            } else {
+                updatedSheets[index] = { ...updatedSheets[index], visible: !currentVal };
+            }
+            
+            const { error } = await supabase.from('app_settings').update({ active_sheets: updatedSheets }).eq('id', 1);
+            if (error) throw error;
             fetchConfig();
         } catch (err) {
-            Alert.alert("Error", "Fallo al cambiar visibilidad");
+            Alert.alert("Error", "Fallo al cambiar visibilidad: " + err.message);
         }
     };
 
     const getSheetsList = () => {
         if (!config?.active_sheets) return [];
-        if (Array.isArray(config.active_sheets)) return config.active_sheets;
-        try { return JSON.parse(config.active_sheets); } catch (e) { return []; }
+        let list = [];
+        if (Array.isArray(config.active_sheets)) list = config.active_sheets;
+        else {
+            try { list = JSON.parse(config.active_sheets); } catch (e) { list = []; }
+        }
+        // Normalizar a objetos {name, visible} para la UI de gestión si vienen como strings
+        return list.map(s => typeof s === 'string' ? { name: s, visible: true } : s);
     };
 
     const sheetsList = getSheetsList();

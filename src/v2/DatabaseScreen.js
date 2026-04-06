@@ -19,23 +19,23 @@ export default function DatabaseScreen() {
             let visibleNames = [];
             if (settings?.active_sheets) {
                 const parsed = Array.isArray(settings.active_sheets) ? settings.active_sheets : JSON.parse(settings.active_sheets);
-                visibleNames = parsed.filter(s => s.visible !== false).map(s => s.name);
+                visibleNames = parsed.map(s => (typeof s === 'object' && s !== null) ? (s.visible !== false ? s.name : null) : s).filter(Boolean);
             }
 
-            const { data, error } = await supabase.from('registros_importacion').select('diametro, is_verified');
+            const { data, error } = await supabase.from('registros_importacion').select('sheet_name, is_verified');
             if (error) throw error;
 
             if (data) {
-                const uniqueInDb = [...new Set(data.map(r => r.diametro))];
+                const uniqueInDb = [...new Set(data.map(r => r.sheet_name))];
                 const finalVisible = visibleNames.length > 0 ? visibleNames : uniqueInDb;
-                const filteredData = data.filter(r => finalVisible.includes(r.diametro));
+                const filteredData = data.filter(r => finalVisible.includes(r.sheet_name));
                 
                 const total = filteredData.length;
                 const verified = filteredData.filter(r => r.is_verified).length;
                 setGlobalStats({ total, verified, percent: total > 0 ? (verified / total) * 100 : 0 });
 
                 const grouped = filteredData.reduce((acc, current) => {
-                    const name = current.diametro || 'OTRO';
+                    const name = current.sheet_name || 'OTRO';
                     if (!acc[name]) acc[name] = { total: 0, verified: 0 };
                     acc[name].total += 1;
                     if (current.is_verified) acc[name].verified += 1;
