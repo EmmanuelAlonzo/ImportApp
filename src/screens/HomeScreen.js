@@ -1,7 +1,8 @@
+// Temp comment for test
 import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, TextInput, StyleSheet, ActivityIndicator, TouchableOpacity, Switch, KeyboardAvoidingView, Platform, SafeAreaView, Keyboard, Modal, FlatList } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
-import { sheetsAPI } from '../api/sheets';
+import { supabase } from '../api/supabase';
 import { KILL_SWITCH_URL } from '../api/config';
 import { Search, Save } from 'lucide-react-native';
 
@@ -42,59 +43,120 @@ export default function HomeScreen() {
         setCustomAlert({ visible: false, title: '', message: '' });
     };
 
+    // REEMPLAZO SUPABASE HOMESCREEN
     useEffect(() => {
         loadInitialData();
+
+        // Suscribirse a cambios en tiempo real en Supabase para sincronización en vivo
+        const channel = supabase
+            .channel('realtime_registros')
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'registros_importacion' }, (payload) => {
+                // Si alguien más modificó un registro, actualizamos la memoria local
+                const newRecord = payload.new;
+
+                // Actualizamos SheetData actual de forma optimista
+                setSheetData(prevData => {
+                    const exists = prevData.findIndex(item => item.id === newRecord.id);
+                    if (exists >= 0) {
+                        const updated = [...prevData];
+                        updated[exists] = mapSupabaseToLocal(newRecord);
+                        return updated;
+                    }
+                    return prevData;
+                });
+
+                // Actualizamos el caché maestro
+                setAllSheetsData(prevAll => {
+                    const sheetName = newRecord.diametro;
+                    if (!prevAll[sheetName]) return prevAll;
+
+                    const list = [...prevAll[sheetName]];
+                    const exists = list.findIndex(i => i.id === newRecord.id);
+                    if (exists >= 0) {
+                        list[exists] = mapSupabaseToLocal(newRecord);
+                        return { ...prevAll, [sheetName]: list };
+                    }
+                    return prevAll;
+                });
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
     }, []);
+
+    // Función auxiliar para mapear el formato Supabase al formato que la UI de React Native ya espera
+    const mapSupabaseToLocal = (row) => ({
+        id: row.id,
+        rowIndex: row.id, // Retrocompatibilidad
+        valueA: row.lote,
+        valueF: row.colada,
+        isVerified: row.is_verified,
+        diametro: row.diametro
+    });
 
     const loadInitialData = async () => {
         try {
             setLoading(true);
 
-            // 0. Validación de Muerte Súbita Remota (Kill Switch)
+            // 0. Kill Switch check se mantiene igual...
             if (KILL_SWITCH_URL && String(KILL_SWITCH_URL).trim() !== "") {
                 try {
-                    // Limpiamos la URL de Gist para que apunte siempre al archivo vivo y no a un Commit Estático (Hash)
-                    // Ej. Elimina /raw/7ba954ddcd36.../interruptor.json dejándolo en /raw/interruptor.json
                     const activeUrl = KILL_SWITCH_URL.replace(/\/raw\/[a-f0-9]+\//i, '/raw/');
-
                     const ksResponse = await fetch(activeUrl, { cache: 'no-store' });
                     const ksText = await ksResponse.text();
-
-                    // Si el gist dice 'false', o tiene el JSON {"active": false}, matamos la app.
                     if (ksText.includes('"active": false') || ksText.trim().toLowerCase() === 'false') {
                         setAppKilled(true);
-
-                        // Intentamos extraer un posible mensaje personalizado del Gist
                         let msg = "Acceso bloqueado por el Administrador.";
-                        try {
-                            const parsed = JSON.parse(ksText);
-                            if (parsed.message) msg = parsed.message;
-                        } catch (e) { }
-
+                        try { const parsed = JSON.parse(ksText); if (parsed.message) msg = parsed.message; } catch (e) { }
                         setKillMessage(msg);
                         setLoading(false);
-                        return; // Aborta la carga de datos y la función entera
+                        return;
                     }
-                } catch (e) {
-                    console.error("Error al contactar Kill Switch, permitiendo acceso por fallo...", e);
-                }
+                } catch (e) { console.error("Error KS", e); }
             }
 
-            const data = await sheetsAPI.getInitialData();
+            // 1. Obtener todos los diámetros (hojas) únicos de Supabase
+            const { data: diametrosData, error: diamError } = await supabase
+                .from('registros_importacion')
+                .select('diametro')
+                .neq('diametro', null);
 
-            // Ignoramos la primera hoja del documento (Índice 0)
-            const filteredSheetNames = data.sheetNames.length > 1 ? data.sheetNames.slice(1) : [];
+            if (diamError) throw diamError;
 
-            setSheets(filteredSheetNames);
-            setAllSheetsData(data.sheetsData);
+            // Extraer y limpiar nombres de hojas únicos
+            const uniqueSheets = [...new Set(diametrosData.map(d => d.diametro))].filter(Boolean).sort();
+            setSheets(uniqueSheets);
 
-            if (filteredSheetNames.length > 0) {
-                const firstSheet = filteredSheetNames[0];
+            // 2. Obtener TODA la base de datos de una vez (Es muy rápido en supabase)
+            const { data: allData, error: dataError } = await supabase
+                .from('registros_importacion')
+                .select('*')
+                .order('id', { ascending: true }); // Mantiene el orden original bajando como en excel
+
+            if (dataError) throw dataError;
+
+            // Agrupar los datos en memoria por diámetro
+            const groupedData = {};
+            uniqueSheets.forEach(sheet => groupedData[sheet] = []);
+
+            allData.forEach(row => {
+                if (row.diametro) {
+                    if (!groupedData[row.diametro]) groupedData[row.diametro] = [];
+                    groupedData[row.diametro].push(mapSupabaseToLocal(row));
+                }
+            });
+
+            setAllSheetsData(groupedData);
+
+            if (uniqueSheets.length > 0) {
+                const firstSheet = uniqueSheets[0];
                 setSelectedSheet(firstSheet);
-                setSheetData(data.sheetsData[firstSheet] || []);
+                setSheetData(groupedData[firstSheet] || []);
             }
         } catch (error) {
-            showAlert("Error - Configuración", "Por favor, verifica la URL de la API o la conexión. Detalle: " + error.message);
+            showAlert("Error Supabase", "No se pudo conectar a la base de datos: " + error.message);
         } finally {
             setLoading(false);
             setFetchingData(false);
@@ -104,10 +166,7 @@ export default function HomeScreen() {
     const handleSheetChange = (value) => {
         if (value && value !== selectedSheet) {
             setSelectedSheet(value);
-            // Cambio de hoja instantáneo usando la memoria local
             setSheetData(allSheetsData[value] || []);
-
-            // Reset de selecciones de formularios al cambiar de hoja
             setSelectedRow(null);
             setSearchTerm('');
             setIsVerified(false);
@@ -115,20 +174,15 @@ export default function HomeScreen() {
         }
     };
 
-    // Obtener valores únicos de la Columna F para el nuevo Desplegable (Ignorando si están verificados en la opción desplegable en sí)
     const uniqueFValues = useMemo(() => {
         if (!sheetData || sheetData.length === 0) return [];
-        // Filtramos para asegurar que haya datos reales
         const validItems = sheetData.filter(item => item.valueF && String(item.valueF).trim() !== "");
-        // Extraer valores únicos usando Set (Asegurando string final)
         const uniqueKeys = [...new Set(validItems.map(item => String(item.valueF).trim()))];
         return uniqueKeys.sort();
     }, [sheetData]);
 
-    // `manualData` se usa cuando llamamos a la función manualmente con datos frescos.
-    // El `<Picker>` por defecto envía (itemValue, itemIndex), por lo que si `manualData` no es un array, usamos `sheetData`.
     const handleSelectValueF = (selectedValue, manualData) => {
-        Keyboard.dismiss(); // <-- Prevenir crash del OS al cambiar el picker con teclado activo
+        Keyboard.dismiss();
         setSearchTerm(selectedValue);
 
         const dataToUse = Array.isArray(manualData) ? manualData : sheetData;
@@ -141,16 +195,15 @@ export default function HomeScreen() {
         }
 
         const exactValue = String(selectedValue).trim();
-
-        // Busca el primer registro de arriba hacia abajo que no esté verificado para seleccionar ese
-        const firstUnverifiedRow = dataToUse.find(item =>
-            String(item.valueF).trim() === exactValue && !item.isVerified
-        );
+        const firstUnverifiedRow = dataToUse.find(item => {
+            const isMatch = String(item.valueF).trim() === exactValue;
+            const isV = item.isVerified === true || String(item.isVerified).toLowerCase() === 'true';
+            return isMatch && !isV;
+        });
 
         if (firstUnverifiedRow) {
             setSelectedRow(firstUnverifiedRow);
         } else {
-            // Si ya todos están verificados, seleccionamos el último
             const allMatching = dataToUse.filter(item => String(item.valueF).trim() === exactValue);
             if (allMatching.length > 0) {
                 setSelectedRow(allMatching[allMatching.length - 1]);
@@ -175,69 +228,90 @@ export default function HomeScreen() {
             return;
         }
 
-        const exactRow = selectedRow; // Guardamos referencia por si cambia
-        const exactSheet = selectedSheet;
-        const exactSearch = searchTerm;
-        const num = numberValue ? Number(numberValue) : '';
-
-        // 1. Bloqueamos botón temporalmente
         setSaving(true);
+        const exactSearch = searchTerm;
 
         try {
-            // 2. Espera síncrona a Google (Toma los 2-3 segundos solicitados por el usuario)
-            const response = await sheetsAPI.updateRow(exactSheet, exactRow.rowIndex, isVerified, num);
+            // Lógica Concurrente en Supabase (Auto-Reasignación)
+            // Primero preguntamos si el ID seleccionado sigue sin verificar en la DB
+            const { data: checkData, error: checkError } = await supabase
+                .from('registros_importacion')
+                .select('is_verified')
+                .eq('id', selectedRow.id)
+                .single();
 
-            if (!response || !response.updated) {
-                throw new Error("La API no confirmó la actualización.");
+            if (checkError) throw checkError;
+
+            let targetId = selectedRow.id;
+            let finalValueA = selectedRow.valueA;
+
+            // Si ALGUIEN MÁS MIENTRAS TANTO verificó esta misma fila:
+            if (checkData.is_verified === true) {
+                // Buscar la siguiente colada igual que no esté verificada
+                const { data: alternateData, error: altError } = await supabase
+                    .from('registros_importacion')
+                    .select('id, lote, is_verified')
+                    .eq('diametro', selectedSheet)
+                    .eq('colada', selectedRow.valueF)
+                    .eq('is_verified', false)
+                    .order('id', { ascending: true })
+                    .limit(1);
+
+                if (altError) throw altError;
+
+                if (alternateData && alternateData.length > 0) {
+                    targetId = alternateData[0].id;
+                    finalValueA = alternateData[0].lote;
+                } else {
+                    throw new Error("Todos los registros de esta colada ya fueron procesados por otros usuarios.");
+                }
             }
 
-            // 3. ACTUALIZACIÓN VISUAL (Lote guardado)
-            // Extraemos la fila y el lote que REALMENTE se afectaron (importante si hubo concurrencia)
-            const actualRowIndex = response.rowIndex || exactRow.rowIndex;
-            const actualValueA = response.valueA || exactRow.valueA;
+            // ACTUALIZACIÓN INSTANTÁNEA A SUPABASE
+            const updatePayload = {
+                is_verified: true,
+                verified_at: new Date().toISOString(),
+            };
 
-            const updatedSheetData = sheetData.map(item => {
-                if (item.rowIndex === actualRowIndex) {
-                    return { ...item, isVerified: isVerified, valueA: actualValueA };
-                }
-                return item;
-            });
+            if (numberValue) updatePayload.coils_cajas = Number(numberValue);
 
-            setSheetData(updatedSheetData);
+            const { data: updatedRecord, error: updateError } = await supabase
+                .from('registros_importacion')
+                .update(updatePayload)
+                .eq('id', targetId)
+                .select()
+                .single();
 
-            setAllSheetsData(prev => ({
-                ...prev,
-                [exactSheet]: updatedSheetData
-            }));
+            if (updateError) throw updateError;
 
-            // 4. Liberar el botón *inmediatamente* después del guardado (3 segundos)...
-            setSaving(false);
+            const localizedRecord = mapSupabaseToLocal(updatedRecord);
 
-            showAlert(
-                "¡Éxito!",
-                `Se guardó correctamente.\n\nLote: ${actualValueA || "Sin dato"}`
+            // Actualización Visual
+            const updatedSheetData = sheetData.map(item =>
+                item.id === targetId ? localizedRecord : item
             );
 
-            // Transición a la siguiente fila
+            setSheetData(updatedSheetData);
+            setAllSheetsData(prev => ({ ...prev, [selectedSheet]: updatedSheetData }));
+
+            setSaving(false);
+            showAlert("¡Éxito!", `Se guardó correctamente en Supabase.\n\nLote: ${finalValueA || "Sin dato"}`);
+
+            // Transición
             handleSelectValueF(exactSearch, updatedSheetData);
 
-            // 5. SINCRONIZACIÓN EN SEGUNDO PLANO (Desvinculada del botón "Guardar")
-            sheetsAPI.getSheetData(exactSheet).then(freshData => {
-                setAllSheetsData(prev => ({ ...prev, [exactSheet]: freshData }));
-                setSheetData(freshData);
-            }).catch(e => console.log("Fondo:", e));
-
         } catch (error) {
-            setSaving(false); // Liberar si falla
-            showAlert("Error", "No se pudo guardar: " + error.message);
+            setSaving(false);
+            showAlert("Error al Guardar", error.message);
         }
     };
+    // FIN REEMPLAZO SUPABASE
 
     if (loading) {
         return (
             <View style={styles.center}>
                 <ActivityIndicator size="large" color="#e60000" />
-                <Text style={{ marginTop: 10, color: 'white' }}>Conectando con Google Sheets...</Text>
+                <Text style={{ marginTop: 10, color: 'white' }}>Conectando con Base de Datos...</Text>
             </View>
         );
     }

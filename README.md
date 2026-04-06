@@ -1,50 +1,52 @@
-# Welcome to your Expo app 👋
+# ImportApp v4.0 - Enterprise Industrial Solution 🚀
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+**ImportApp** es una robusta plataforma de control operativo diseñada para entornos industriales de alto rendimiento. Desarrollada con Expo y React Native, esta solución permite la gestión, verificación y auditoría de inventarios en tiempo real, con una sincronización profunda y bidireccional entre Google Sheets y Supabase.
 
-## Get started
+---
 
-1. Install dependencies
+## 🖤 Motor Visual: MoodyDark Pristine Engine
 
-   ```bash
-   npm install
-   ```
+La v4.0 introduce el nuevo motor visual **MoodyDark**, diseñado específicamente para pantallas de planta.
+- **Contraste Industrial**: Fondo oscuro profundo (#121212) con acentos en Rojo Industrial (#D32F2F) para máxima visibilidad en condiciones de poca luz.
+- **Tipografía de Alta Legibilidad**: Enfoque en datos críticos (Lotes, Pesos, Diámetros).
+- **Micro-Animaciones**: Feedback visual instantáneo para confirmación de procesos.
 
-2. Start the app
+---
 
-   ```bash
-   npx expo start
-   ```
+## ✨ Características Principales (v4.0 Enterprise)
 
-In the output, you'll find options to open the app in a
+### 🛠️ Control Operativo de Planta
+- **Verificación en Tiempo Real**: Validación de productos conforme salen de línea, con marcado instantáneo en la base de datos central.
+- **Ingreso Manual Inteligente**: Generación automática de lotes correlativos (`YYMMDDIXXX`) con inyección directa a la nube.
+- **Generación Masiva de Etiquetas**: Motor de impresión PDF corporativo (120mm x 80mm) con códigos de barras 128 auto-generados para impresoras térmicas.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+### 👥 Gestión de Personal v4.8.2
+- **Seguridad por PIN**: Acceso restringido mediante códigos numéricos de 4 dígitos.
+- **Sistema de Roles Dinámicos**: Administrador, Verificador, Supervisor, Operador, Digitador y Auxiliar.
+- **Baja Administrativa**: Capacidad de suspender el acceso a personal de forma instantánea sin borrar sus registros históricos.
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+### 📊 Inteligencia de Datos y Reportes
+- **Análisis de Avance Industrial**: Dashboard visual de eficiencia por diámetros y lotes verificados.
+- **Exportación Gerencial**: Generación de reportes Excel (.xlsx) compatibles con dispositivos móviles para auditorías rápidas.
+- **Sincronización Drive v4.8.2**: Motor de importación optimizado mediante Supabase Edge Functions que procesa miles de registros en segundos.
 
-## Get a fresh project
+---
 
-When you're ready, run:
+## 🛠️ Stack Tecnológico
 
-```bash
-npm run reset-project
-```
+- **Frontend**: React Native, Expo (SDK 50+), Expo Router (v2).
+- **Backend**: Supabase (PostgreSQL + Edge Functions Deno).
+- **Lógica de Negocio**: Google Apps Script (Sincronización Bidireccional).
+- **Documentación y Reportes**: ExcelJS, Expo-Print, Thermal Barcode Engine.
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+---
 
-## Learn more
+## 🚀 Flujo de Trabajo Industrial
 
-To learn more about developing your project with Expo, look at the following resources:
+1. **Configuración Global**: El administrador autenticado vincula el link maestro de Google Sheets.
+2. **Sincronización**: Se importan dinámicamente las hojas de producción activas.
+3. **Operación**: El personal de planta verifica lotes o genera etiquetas según su rol.
+4. **Auditoría**: Los supervisores exportan reportes consolidados y monitorean la eficiencia en tiempo real.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+---
+© 2026 ImportApp Enterprise Solution | **Industrial Reliability Redefined.**
