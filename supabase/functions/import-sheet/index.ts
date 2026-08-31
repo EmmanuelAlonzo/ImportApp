@@ -91,7 +91,8 @@ serve(async (req) => {
         .filter((r: any) => r.lote && r.lote.trim() !== '')
 
       if (records.length > 0) {
-        const { error } = await supabase.from('registros_importacion').insert(records)
+        const { error } = await supabase.from('registros_importacion').upsert(records)
+        if (error) console.error("Upsert Error:", error)
         totalImported += records.length
       }
     }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, SafeAreaView, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, SafeAreaView, ScrollView, Vibration } from 'react-native';
 import { supabase } from '../api/supabase';
 import { useAuth } from '../context/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
@@ -31,28 +31,39 @@ export default function ManualEntryScreen() {
     };
 
     const calculateNextLote = async (diam) => {
-        const now = new Date();
-        const yy = now.getFullYear().toString().slice(-2);
-        const mm = (now.getMonth() + 1).toString().padStart(2, '0');
-        const dd = now.getDate().toString().padStart(2, '0');
-        const prefix = `${yy}${mm}${dd}I`;
+        try {
+            // Buscamos el lote más reciente insertado/sincronizado para esta HOJA (que representa el diámetro)
+            const { data } = await supabase
+                .from('registros_importacion')
+                .select('lote')
+                .eq('sheet_name', diam) // CRÍTICO: El nombre de la hoja garantiza que están en el mismo grupo
+                .order('id', { ascending: false }) // 'id' garantiza el registro más nuevo absoluto
+                .limit(1);
 
-        const { data } = await supabase
-            .from('registros_importacion')
-            .select('lote')
-            .eq('diametro', diam)
-            .like('lote', `${prefix}%`)
-            .order('lote', { ascending: false })
-            .limit(1);
+            if (data && data.length > 0 && data[0].lote) {
+                const lastLote = data[0].lote;
+                
+                // Expresión regular pura para atrapar secuencias numéricas sin importar prefijos
+                const match = lastLote.match(/(\d+)$/);
+                if (match) {
+                    const numStr = match[1];
+                    const prefix = lastLote.slice(0, -numStr.length);
+                    // Incremento respetando los "ceros" a la izquierda originales
+                    const nextNum = (parseInt(numStr, 10) + 1).toString().padStart(numStr.length, '0');
+                    setGeneratedBatch(prefix + nextNum);
+                    return;
+                }
+            }
 
-        let nextSeq = 1;
-        if (data && data.length > 0) {
-            const lastLote = data[0].lote;
-            const lastSeq = lastLote.split('I')[1];
-            nextSeq = parseInt(lastSeq) + 1;
+            // Fallback Enterprise (Solo si jamás ha entrado material en Drive para esta hoja)
+            const now = new Date();
+            const yy = now.getFullYear().toString().slice(-2);
+            const mm = (now.getMonth() + 1).toString().padStart(2, '0');
+            const dd = now.getDate().toString().padStart(2, '0');
+            setGeneratedBatch(`${yy}${mm}${dd}I001`);
+        } catch (e) {
+            console.log("Fallo algoritmo de secuencia:", e);
         }
-
-        setGeneratedBatch(`${prefix}${nextSeq.toString().padStart(3, '0')}`);
     };
 
     const handleSave = async () => {
@@ -69,20 +80,33 @@ export default function ManualEntryScreen() {
                 updated_at: now
             };
 
+            // 1. Validar e insertar localmente (Rápido)
             const { error: dbError } = await supabase.from('registros_importacion').insert([record]);
-            if (dbError) throw dbError;
+            
+            if (dbError) {
+                // LÓGICA EMPRESARIAL: Prevención de Colisiones Multi-operario
+                if (dbError.code === '23505' || dbError.message.includes('duplicate')) {
+                    Alert.alert("Colisión Evitada", "Otro compañero sincronizó este lote simultáneamente. Se le asignará uno nuevo automáticamente.");
+                    await calculateNextLote(selectedDiam);
+                    return; // Frenar ejecución
+                }
+                throw dbError; // Otro error
+            }
 
-            await fetch('https://pskcnkzgoaqesjiohyth.supabase.co/functions/v1/sync-manual-entry', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer sb_publishable_OZX0jnagvl8zfKdM42KlNg_5EsG0LTl` },
-                body: JSON.stringify(record)
-            });
+            // 2. Feedback Físico Industrial
+            Vibration.vibrate(100);
 
-            Alert.alert("Éxito", `Lote ${generatedBatch} inyectado.`);
+            // 3. Delegación de Flujo Drive (Fire-and-Forget Cero Latencia)
+            // Lógica asíncrona: El cliente guarda al instante y el servidor se pelea con Google sin congelar la app.
+            supabase.functions.invoke('sync-manual-entry', {
+                body: record
+            }).catch(e => console.log('Edge Function Sync Fallido:', e.message));
+
+            Alert.alert("Éxito", `Lote ${generatedBatch} asegurado.`);
             calculateNextLote(selectedDiam);
 
         } catch (err) {
-            Alert.alert("Error", err.message);
+            Alert.alert("Fallo de Transacción", err.message);
         } finally {
             setSaving(false);
         }

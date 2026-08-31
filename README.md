@@ -28,15 +28,15 @@ La v4.0 introduce el nuevo motor visual **MoodyDark**, diseñado específicament
 ### 📊 Inteligencia de Datos y Reportes
 - **Análisis de Avance Industrial**: Dashboard visual de eficiencia por diámetros y lotes verificados.
 - **Exportación Gerencial**: Generación de reportes Excel (.xlsx) compatibles con dispositivos móviles para auditorías rápidas.
-- **Sincronización Drive v4.8.2**: Motor de importación optimizado mediante Supabase Edge Functions que procesa miles de registros en segundos.
+- **Sincronización Avanzada con Drive**: Sincronización bidireccional completamente delegada al backend. El dispositivo móvil interactúa únicamente con Supabase, mientras que Edge Functions dedicadas (autenticadas mediante Google Service Accounts) gestionan la rápida inserción y escritura directa de estados de verificación hacia Google Drive. Esto elimina el uso del antiguo y lento Google Apps Script, resolviendo problemas de concurrencia y minimizando la carga en el dispositivo del operario.
 
 ---
 
 ## 🛠️ Stack Tecnológico
 
-- **Frontend**: React Native, Expo (SDK 50+), Expo Router (v2).
-- **Backend**: Supabase (PostgreSQL + Edge Functions Deno).
-- **Lógica de Negocio**: Google Apps Script (Sincronización Bidireccional).
+- **Frontend Mobile**: React Native (v0.81), Expo (SDK ~54), Expo Router (~v6), Reanimated y AsyncStorage. Implementa el **"MoodyDark Pristine Engine"** con un diseño estandarizado usando áreas de tap ampliadas (para guantes industriales) y prevención de fatiga visual.
+- **Backend & Base de Datos**: Supabase (PostgreSQL) para operaciones transaccionales y de lectura de alta velocidad.
+- **Transacciones de Estado y Conectividad Drive**: Supabase Edge Functions escritas en TypeScript (Deno). Se interconectan con el API de Google utilizando **Google Service Accounts** para modificar directamente las planillas. Toda la arquitectura anterior de Google Apps Script ha sido deprecada y eliminada para brindar Atomicidad ("Race Conditions" resueltas).
 - **Documentación y Reportes**: ExcelJS, Expo-Print, Thermal Barcode Engine.
 
 ---

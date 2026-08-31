@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilos base para la interfaz industrial */
+body {
+  background-color: #0F172A; /* slate-900 / bg industrial */
+  color: #F8FAFC;            /* slate-50 */
+}

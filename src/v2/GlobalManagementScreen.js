@@ -46,17 +46,16 @@ export default function GlobalManagementScreen() {
         if (!sheetUrl) return Alert.alert("Error", "URL requerida.");
         setSyncing(true);
         try {
-            const response = await fetch('https://pskcnkzgoaqesjiohyth.supabase.co/functions/v1/import-sheet', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer sb_publishable_OZX0jnagvl8zfKdM42KlNg_5EsG0LTl` },
-                body: JSON.stringify({ url: sheetUrl })
+            const { error } = await supabase.functions.invoke('import-sheet', {
+                body: { url: sheetUrl }
             });
-            if (response.ok) {
-                Alert.alert("Éxito", "Infraestructura sincronizada.");
-                fetchConfig();
-            } else throw new Error("Fallo en sincronización");
+            
+            if (error) throw new Error("Fallo en la comunicación con el Edge Function.");
+            
+            Alert.alert("Éxito", "Infraestructura sincronizada.");
+            fetchConfig();
         } catch (err) {
-            Alert.alert("Error", err.message);
+            Alert.alert("Error Operativo", err.message);
         } finally {
             setSyncing(false);
         }

@@ -69,6 +69,14 @@ serve(async (req) => {
     // Puede ser llamado directo desde la app o vía Database Webhook
     const body = await req.json()
     const record = body.record || body
+    const oldRecord = body.old_record || {}
+
+    // Protección frente a múltiples triggers concurrentes
+    if (body.type === 'UPDATE' && oldRecord.is_verified === record.is_verified) {
+      return new Response(JSON.stringify({ message: 'Ignorado: Sin cambio en verificación' }), {
+        status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
 
     const {
       spreadsheet_id,

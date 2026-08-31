@@ -79,8 +79,25 @@ serve(async (req) => {
 
     const result = await appendRes.json()
 
+    // 4. Persistir atómicamente en Supabase para concurrencia multi-operario
+    await supabase.from('registros_importacion').upsert({
+      spreadsheet_id: spreadsheetId,
+      sheet_name: diametro,
+      lote,
+      sku: sku || null,
+      coil: coil || null,
+      sae: sae || null,
+      peso: peso || null,
+      colada: colada || null,
+      diametro,
+      is_verified: true,
+      verified_at: verified_at || new Date().toISOString(),
+      verified_by: verified_by || "MANUAL ENTRY",
+      updated_at: new Date().toISOString()
+    })
+
     return new Response(JSON.stringify({ 
-      message: 'Sincronización Manual Exitosa (v4.0)', 
+      message: 'Sincronización Manual y DB Local Exitosa (v4.0)', 
       lote,
       sheet: diametro 
     }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })

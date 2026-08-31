@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, SafeAreaView, ActivityIndicator, FlatList, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, SafeAreaView, ActivityIndicator, FlatList, ScrollView, TextInput, Vibration } from 'react-native';
 import { supabase } from '../api/supabase';
 import { useAuth } from '../context/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,15 +11,32 @@ export default function VerificationScreen() {
     const [records, setRecords] = useState([]);
     const [loading, setLoading] = useState(false);
     const [verifying, setVerifying] = useState(null);
+    const [searchQuery, setSearchQuery] = useState('');
 
     const industrialRed = '#D32F2F';
 
     // 1. Cargar Diámetros Disponibles al Inicio
     useEffect(() => { fetchSheets(); }, []);
 
-    // 2. Cada vez que cambie el Diámetro Seleccionado, Recargar Lotes
+    // 2. Transmisión en Tiempo Real y Carga de Lotes
     useEffect(() => { 
-        if (selectedSheet) fetchPendingRecords(); 
+        if (!selectedSheet) return;
+        fetchPendingRecords(); 
+
+        // LÓGICA EMPRESARIAL: Supabase Realtime (Previene colisión Multiusuario en vivo)
+        const channel = supabase
+            .channel('verificaciones_plant_vivo')
+            .on('postgres_changes', { 
+                event: 'UPDATE', 
+                schema: 'public', 
+                table: 'registros_importacion',
+                filter: `is_verified=eq.true` // Si alguien maca 'verificado', quitarlo en todas las tablets al instante
+            }, (payload) => {
+                setRecords(prev => prev.filter(r => r.id !== payload.new.id)); // Retiro fantasma en tiempo real
+            })
+            .subscribe();
+
+        return () => { supabase.removeChannel(channel); };
     }, [selectedSheet]);
 
     const fetchSheets = async () => {
@@ -74,12 +91,18 @@ export default function VerificationScreen() {
     };
 
     const handleVerify = async (item) => {
-        setVerifying(item.id);
+        // 1. ACTUALIZACIÓN OPTIMISTA (Velocidad extrema asumiendo éxito)
+        const rollbackRecord = item;
+        
+        // Removemos inmediatamente de la UI y vibra para confirmación física
+        Vibration.vibrate(100);
+        setRecords(prev => prev.filter(r => r.id !== item.id));
+        setSearchQuery(''); // Limpia la búsqueda
+        
         const now = new Date().toISOString();
         
         try {
-            // 1. BLOQUEO ATÓMICO (SEGURIDAD TOTAL)
-            // Solo actualizamos Supabase. El Webhook del servidor hará el resto.
+            // 2. Transacción atómica de fondo
             const { data, error: dbError } = await supabase
                 .from('registros_importacion')
                 .update({ 
@@ -93,23 +116,25 @@ export default function VerificationScreen() {
 
             if (dbError) throw dbError;
 
-            // Si no se actualizó, es porque otro lo tomó
             if (data?.length === 0) {
-                Alert.alert("Lote Ocupado", "Otro operario ya ha verificado este lote.");
-                setRecords(prev => prev.filter(r => r.id !== item.id));
-                return;
+                // Alguien nos ganó por milisegundos. La UI ya lo sacó, lanzamos aviso.
+                Alert.alert("Lote Tomado", "Otro operario procesó este lote simultáneamente.");
             }
 
-            // 2. RETIRO INSTANTÁNEO (ALTA VELOCIDAD)
-            setRecords(prev => prev.filter(r => r.id !== item.id));
-
         } catch (e) {
-            console.log("Error Verificación:", e);
-            Alert.alert("Confirma tu conexión", "No se pudo registrar la toma por un problema de señal.");
-        } finally {
-            setVerifying(null);
+            // 3. ROLLBACK EMPRESARIAL
+            // Si falla la red, regresamos el ítem visualmente para que sepa que no se registró
+            setRecords(prev => [...prev, rollbackRecord].sort((a,b) => a.lote.localeCompare(b.lote)));
+            Alert.alert("Fallo de Conexión", "El lote no se registró. Intente nuevamente.");
         }
     };
+
+    // Búsqueda en vivo (óptima para teclado táctil en recepción de materia prima)
+    const displayedRecords = records.filter(r => 
+        r.lote.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        (r.sku && r.sku.toLowerCase().includes(searchQuery.toLowerCase()))
+    );
+
 
     const renderItem = ({ item }) => (
         <View style={styles.recordCard}>
@@ -171,6 +196,26 @@ export default function VerificationScreen() {
                 </ScrollView>
             </View>
 
+            {/* Buscador Dinámico de Teclado */}
+            {selectedSheet && (
+                <View style={styles.searchContainer}>
+                    <Ionicons name="search-sharp" size={22} color="#666" style={{marginRight: 10}} />
+                    <TextInput 
+                        style={styles.searchInput}
+                        placeholder="Filtrar lote manualmente..."
+                        placeholderTextColor="#555"
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                        autoCapitalize="characters"
+                    />
+                    {searchQuery.length > 0 && (
+                        <TouchableOpacity onPress={() => setSearchQuery('')}>
+                            <Ionicons name="close-circle" size={22} color="#666" />
+                        </TouchableOpacity>
+                    )}
+                </View>
+            )}
+
             {loading && records.length === 0 ? (
                 <View style={styles.loaderContainer}>
                     <ActivityIndicator size="large" color={industrialRed} />
@@ -178,7 +223,7 @@ export default function VerificationScreen() {
                 </View>
             ) : (
                 <FlatList 
-                    data={records}
+                    data={displayedRecords}
                     renderItem={renderItem}
                     keyExtractor={item => item.id.toString()}
                     contentContainerStyle={{padding: 15, paddingBottom: 50}}
@@ -215,6 +260,9 @@ const styles = StyleSheet.create({
     sheetBtnActive: { backgroundColor: '#D32F2F', borderColor: '#D32F2F' },
     sheetBtnText: { color: '#666', fontSize: 11, fontWeight: 'bold' },
     sheetBtnTextActive: { color: '#FFF' },
+
+    searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0A0A0A', marginHorizontal: 15, marginTop: 15, paddingHorizontal: 15, borderRadius: 12, borderWidth: 1, borderColor: '#333' },
+    searchInput: { flex: 1, paddingVertical: 15, color: '#FFF', fontSize: 13, fontWeight: 'bold', letterSpacing: 1 },
 
     loaderContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     loaderText: { color: '#444', fontSize: 9, fontWeight: 'bold', marginTop: 15, letterSpacing: 1 },
