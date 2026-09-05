@@ -7,7 +7,7 @@ import Mode2CoilSearch from './Mode2CoilSearch';
 import ExportView from './ExportView';
 import AdminDashboardView from './AdminDashboardView';
 import ErrorBoundary from '../components/ErrorBoundary';
-import { LogOut, RefreshCw, Shield, Layers, Search, CheckCircle2, Loader2, AlertCircle, FileSpreadsheet, Settings, UploadCloud, Clock, ShieldCheck, Database } from 'lucide-react';
+import { LogOut, RefreshCw, Shield, Layers, Search, CheckCircle, CheckCircle2, Loader2, AlertCircle, AlertTriangle, Send, FileSpreadsheet, Settings, UploadCloud, Clock, ShieldCheck, Database } from 'lucide-react';
 
 export default function MainDashboard() {
   const { user, operatorId, logout, checkPermission } = useAuth();
@@ -31,6 +31,7 @@ export default function MainDashboard() {
   const [finalizingTurn, setFinalizingTurn] = useState(false);
   const [loadingDiams, setLoadingDiams] = useState(false);
   const [dashboardError, setDashboardError] = useState('');
+  const [finalizeError, setFinalizeError] = useState('');
   const [finalizeSuccessMsg, setFinalizeSuccessMsg] = useState('');
 
   // Panel de Avance Global (Métricas exactas)
@@ -46,6 +47,7 @@ export default function MainDashboard() {
 
   const canAccessReports = isDigitador || isVerificador || isSupervisor || isAdmin;
   const canFinalizeTurn = isVerificador || isSupervisor || isAdmin;
+  const isAdminOrSupervisor = isSupervisor || isAdmin;
   const canAccessAdmin = isAdmin;
 
   // Redirección de seguridad si la vista activa no está permitida para el rol
@@ -282,19 +284,34 @@ export default function MainDashboard() {
     }
   };
 
-  // Finalizar turno forzando la inyección de todos los pendientes en Supabase a Google Drive (Admin / Supervisor)
+  // Finalizar turno forzando la inyección de todos los pendientes en Supabase a Google Drive (Admin / Supervisor / Verificador)
   const handleConfirmFinalizeTurn = async () => {
     setFinalizingTurn(true);
+    setFinalizeError('');
     setDashboardError('');
     try {
       const result = await sheetSyncService.finalizeShiftSync();
+      if (!result?.success) {
+        const errorMsg = result?.error || 'No se pudo completar la sincronización con Google Drive.';
+        setFinalizeError(errorMsg);
+        setDashboardError(`Error al inyectar a Google Drive: ${errorMsg}`);
+        return;
+      }
+
+      const count = result?.count ?? 0;
+      const countInfo = count > 0 ? ` (${count} registros sincronizados)` : '';
       setShowFinalizeTurnModal(false);
-      const countInfo = result?.count !== undefined ? ` (${result.count} registros sincronizados)` : '';
       setFinalizeSuccessMsg(`Turno finalizado: Google Drive actualizado con éxito${countInfo}`);
       setTimeout(() => setFinalizeSuccessMsg(''), 6000);
+
+      // Refrescar métricas y diámetros
+      if (typeof fetchMetrics === 'function') await fetchMetrics();
+      if (typeof fetchActiveDiameters === 'function') await fetchActiveDiameters(false);
     } catch (err) {
-      console.error('Error finalizando turno hacia Google Drive:', err.message);
-      setDashboardError(`Error al inyectar a Google Drive: ${err.message}`);
+      console.error('Error finalizando turno hacia Google Drive:', err);
+      const errMsg = err?.message || 'Error inesperado al sincronizar con Google Drive.';
+      setFinalizeError(errMsg);
+      setDashboardError(`Error al inyectar a Google Drive: ${errMsg}`);
     } finally {
       setFinalizingTurn(false);
     }
@@ -364,7 +381,10 @@ export default function MainDashboard() {
             {canFinalizeTurn && (
               <button
                 type="button"
-                onClick={() => setShowFinalizeTurnModal(true)}
+                onClick={() => {
+                  setFinalizeError('');
+                  setShowFinalizeTurnModal(true);
+                }}
                 className="p-2.5 bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-400 border border-emerald-600/50 hover:border-emerald-500 rounded-xl transition duration-150 active:scale-95 flex items-center space-x-2 cursor-pointer shadow-md shadow-emerald-950/30"
                 title="Finalizar turno y volcar datos a Google Drive"
               >
@@ -500,7 +520,7 @@ export default function MainDashboard() {
                 </button>
               </div>
 
-              {diameters.length === 0 ? (
+              {(!diameters || diameters.length === 0) ? (
                 <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 text-center text-slate-400 font-bold text-sm">
                   Sin registros pendientes de verificación en planta.
                 </div>
@@ -556,9 +576,9 @@ export default function MainDashboard() {
             <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <h2 className="text-xs font-bold text-slate-400 tracking-widest uppercase">
-                  AUDITADOS EN ESTE TURNO ({history.length})
+                  AUDITADOS EN ESTE TURNO ({history?.length ?? 0})
                 </h2>
-                {queueLength > 0 && (
+                {(queueLength ?? 0) > 0 && (
                   <button
                     type="button"
                     onClick={() => sheetSyncService.flushQueue()}
@@ -571,7 +591,7 @@ export default function MainDashboard() {
               </div>
               
               <div className="bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden">
-                {history.length === 0 ? (
+                {(!history || history.length === 0) ? (
                   <div className="p-8 text-center text-xs text-slate-500 font-bold uppercase tracking-wider">
                     Ningún rollo verificado en este turno todavía.
                   </div>
@@ -684,52 +704,95 @@ export default function MainDashboard() {
         </div>
       )}
 
-      {/* Modal de Confirmación Finalizar Turno (Admin / Supervisor) */}
-      {showFinalizeTurnModal && isAdminOrSupervisor && (
-        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-sm flex justify-center items-center p-6">
-          <div className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-3xl p-8 shadow-2xl space-y-6">
-            <div className="w-14 h-14 bg-emerald-950 border border-emerald-500/40 rounded-2xl flex items-center justify-center mx-auto text-emerald-400">
-              <UploadCloud className="w-6 h-6" />
-            </div>
+      {/* Modal de Confirmación Finalizar Turno (Admin / Supervisor / Verificador) */}
+      {showFinalizeTurnModal && canFinalizeTurn && (
+        <ErrorBoundary fallbackTitle="Error en el modal de Finalizar Turno">
+          <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-sm flex justify-center items-center p-4 sm:p-6">
+            <div className="w-full max-w-lg bg-slate-800 border border-slate-700 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+              <div className="w-14 h-14 bg-emerald-950 border border-emerald-500/40 rounded-2xl flex items-center justify-center mx-auto text-emerald-400">
+                <UploadCloud className="w-7 h-7" />
+              </div>
 
-            <div className="text-center space-y-2">
-              <h3 className="text-xl font-bold text-white tracking-wide">¿FINALIZAR TURNO E INYECTAR A GOOGLE DRIVE?</h3>
-              <p className="text-sm text-slate-300 leading-relaxed">
-                Esta acción volcará todas las bobinas verificadas en la base de datos directamente a la hoja de cálculo de Google Drive para la reportería interna de planta.
-              </p>
-            </div>
+              <div className="text-center space-y-2">
+                <h3 className="text-xl font-bold text-white tracking-wide">¿FINALIZAR TURNO E INYECTAR A GOOGLE DRIVE?</h3>
+                <p className="text-sm text-slate-300 leading-relaxed">
+                  Esta acción volcará todas las bobinas verificadas en la base de datos directamente a la hoja de cálculo de Google Drive para la reportería interna de planta.
+                </p>
+              </div>
 
-            <div className="flex flex-col space-y-3">
-              <button
-                type="button"
-                onClick={handleConfirmFinalizeTurn}
-                disabled={finalizingTurn}
-                className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-2xl font-black tracking-widest text-sm transition flex items-center justify-center space-x-2 cursor-pointer shadow-lg shadow-emerald-500/20"
-              >
-                {finalizingTurn ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin text-slate-900" />
-                    <span>INYECTANDO A GOOGLE DRIVE...</span>
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="w-5 h-5 text-slate-900" />
-                    <span>FINALIZAR TURNO Y ENVIAR</span>
-                  </>
-                )}
-              </button>
-              
-              <button
-                type="button"
-                onClick={() => setShowFinalizeTurnModal(false)}
-                disabled={finalizingTurn}
-                className="w-full py-4 bg-slate-700 hover:bg-slate-650 text-white rounded-2xl font-black tracking-widest text-sm transition cursor-pointer"
-              >
-                CANCELAR
-              </button>
+              {/* Resumen del Turno con optional chaining y valores seguros por defecto */}
+              <div className="bg-slate-900/80 border border-slate-700/80 rounded-2xl p-4 space-y-3">
+                <div className="text-[10px] font-black tracking-widest text-slate-400 uppercase border-b border-slate-800 pb-2 flex justify-between items-center">
+                  <span>RESUMEN DEL TURNO</span>
+                  <span className="text-emerald-400 font-mono">{user?.rol?.toUpperCase() ?? 'OPERADOR'}</span>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="bg-slate-800/60 p-2.5 rounded-xl">
+                    <span className="text-slate-400 text-[10px] block">Operario Activo:</span>
+                    <span className="font-bold text-white truncate block">{user?.nombre ?? 'No identificado'}</span>
+                  </div>
+                  <div className="bg-slate-800/60 p-2.5 rounded-xl">
+                    <span className="text-slate-400 text-[10px] block">Auditados en Sesión:</span>
+                    <span className="font-bold text-emerald-400 font-mono">{history?.length ?? 0} bobinas</span>
+                  </div>
+                  <div className="bg-slate-800/60 p-2.5 rounded-xl">
+                    <span className="text-slate-400 text-[10px] block">Pendientes en Planta:</span>
+                    <span className="font-bold text-yellow-400 font-mono">{metrics?.pending ?? 0} bobinas</span>
+                  </div>
+                  <div className="bg-slate-800/60 p-2.5 rounded-xl">
+                    <span className="text-slate-400 text-[10px] block">Eficiencia Global:</span>
+                    <span className="font-bold text-sky-400 font-mono">{metrics?.efficiency ?? 0}%</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Mensaje de Error dentro del modal si falla write-verification */}
+              {finalizeError && (
+                <div className="bg-red-950/70 border border-red-500/60 text-red-200 text-xs p-4 rounded-2xl space-y-1.5 animate-pulse">
+                  <div className="flex items-center space-x-2 font-bold text-red-400">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    <span>Error al procesar sincronización:</span>
+                  </div>
+                  <p className="text-[11px] font-mono leading-relaxed pl-6">{finalizeError}</p>
+                </div>
+              )}
+
+              <div className="flex flex-col space-y-3">
+                <button
+                  type="button"
+                  onClick={handleConfirmFinalizeTurn}
+                  disabled={finalizingTurn}
+                  className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-slate-900 rounded-2xl font-black tracking-widest text-sm transition flex items-center justify-center space-x-2 cursor-pointer shadow-lg shadow-emerald-500/20"
+                >
+                  {finalizingTurn ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin text-slate-900" />
+                      <span>INYECTANDO A GOOGLE DRIVE...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-5 h-5 text-slate-900" />
+                      <span>{finalizeError ? 'REINTENTAR SINCRONIZACIÓN' : 'FINALIZAR TURNO Y ENVIAR'}</span>
+                    </>
+                  )}
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowFinalizeTurnModal(false);
+                    setFinalizeError('');
+                  }}
+                  disabled={finalizingTurn}
+                  className="w-full py-4 bg-slate-700 hover:bg-slate-650 text-white rounded-2xl font-black tracking-widest text-sm transition cursor-pointer"
+                >
+                  CANCELAR
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        </ErrorBoundary>
       )}
     </div>
   );

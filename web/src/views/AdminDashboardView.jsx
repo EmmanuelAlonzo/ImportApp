@@ -182,7 +182,6 @@ export default function AdminDashboardView() {
       });
 
       await fetchAppSettings();
-      await fetchMetrics();
       setTimeout(() => setSuccessMsg(''), 6000);
     } catch (err) {
       console.error('Error en sincronización desde Drive:', err);
@@ -303,21 +302,28 @@ export default function AdminDashboardView() {
   };
 
   // Eliminar Personal
-  const handleDeleteUser = async (id, nombre) => {
-    if (!window.confirm(`¿Desea eliminar permanentemente a ${nombre}?`)) return;
+  const handleDeleteUser = async (userId) => {
+    if (!window.confirm("¿Seguro que deseas eliminar a este usuario?")) return;
 
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('usuarios_app')
         .delete()
-        .eq('id', id);
-      
-      if (error) throw error;
-      setSuccessMsg('Operario eliminado.');
-      fetchUsers();
+        .eq('id', userId)
+        .select();
+
+      if (error) {
+        console.error("Error al eliminar usuario en Supabase:", error);
+        alert("No se pudo eliminar el usuario: " + error.message);
+        return;
+      }
+
+      setUsers(prev => prev.filter(u => u.id !== userId));
+      setSuccessMsg('Usuario eliminado exitosamente.');
       setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err) {
-      setErrorMsg(`Error al borrar usuario: ${err.message}`);
+      console.error("Error inesperado al eliminar usuario:", err);
+      alert("No se pudo eliminar el usuario: " + (err?.message || err));
     }
   };
 
