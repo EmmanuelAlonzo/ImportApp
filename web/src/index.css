@@ -3,7 +3,18 @@
 @tailwind utilities;
 
 /* Estilos base para la interfaz industrial */
-body {
+html, body {
   background-color: #0F172A; /* slate-900 / bg industrial */
   color: #F8FAFC;            /* slate-50 */
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* Scrollbar invisible para deslizamiento móvil suave */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

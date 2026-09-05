@@ -318,139 +318,178 @@ export default function MainDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans">
-      {/* Header Turno */}
-      <header className="bg-slate-950 p-4 border-b-2 border-red-600 flex flex-col md:flex-row justify-between items-center gap-4 shadow-lg">
-        <div className="flex items-center space-x-3 w-full md:w-auto">
-          <div className="w-10 h-10 bg-slate-900 border border-slate-700 rounded-xl flex items-center justify-center">
-            <Shield className="w-5 h-5 text-red-500" />
-          </div>
-          <div>
-            <h1 className="text-sm font-black tracking-widest text-red-500 uppercase">ENTERPRISE v4.8</h1>
-            <p className="text-lg font-bold text-white leading-tight">{user?.nombre}</p>
-            <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-black tracking-wide">
-              {user?.rol?.toUpperCase()}
-            </span>
-          </div>
-        </div>
+    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans max-w-full overflow-x-hidden">
+      {/* Header Turno - Mobile First */}
+      <header className="bg-slate-950 p-3 sm:p-4 border-b-2 border-red-600 shadow-lg sticky top-0 z-40 max-w-full">
+        <div className="max-w-5xl mx-auto flex flex-col md:flex-row justify-between items-center gap-3 sm:gap-4">
+          {/* Fila 1 Móvil / Izquierda Escritorio: Identificación del operario y Botones de Acción Móviles */}
+          <div className="flex items-center justify-between w-full md:w-auto gap-2">
+            <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 bg-slate-900 border border-slate-700 rounded-xl flex items-center justify-center flex-shrink-0">
+                <Shield className="w-4 h-4 sm:w-5 sm:h-5 text-red-500" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center space-x-1.5 sm:space-x-2">
+                  <h1 className="text-[10px] sm:text-sm font-black tracking-widest text-red-500 uppercase truncate">
+                    ENTERPRISE v4.8
+                  </h1>
+                  <span className="text-[8px] sm:text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-black tracking-wide">
+                    {user?.rol?.toUpperCase()}
+                  </span>
+                </div>
+                <p className="text-xs sm:text-base font-bold text-white leading-tight truncate">
+                  {user?.nombre}
+                </p>
+              </div>
+            </div>
 
-        {/* Top Navbar Section & Control Action Buttons */}
-        <div className="flex flex-col sm:flex-row items-center gap-4 w-full md:w-auto justify-end">
-          {/* Navigation Bar */}
-          <nav className="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
-            <button
-              onClick={() => setActiveView('verification')}
-              className={`px-4 py-2 rounded-lg text-xs font-black tracking-wider transition cursor-pointer ${
-                activeView === 'verification'
-                  ? 'bg-slate-800 text-emerald-400'
-                  : 'text-slate-450 hover:text-white'
-              }`}
-            >
-              VERIFICACIÓN
-            </button>
-            {canAccessReports && (
-              <button
-                onClick={() => setActiveView('reports')}
-                className={`px-4 py-2 rounded-lg text-xs font-black tracking-wider transition flex items-center space-x-1.5 cursor-pointer ${
-                  activeView === 'reports'
-                    ? 'bg-slate-800 text-emerald-400'
-                    : 'text-slate-450 hover:text-white'
-                }`}
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5" />
-                <span>REPORTERÍA</span>
-              </button>
-            )}
-            {canAccessAdmin && (
-              <button
-                onClick={() => setActiveView('admin')}
-                className={`px-4 py-2 rounded-lg text-xs font-black tracking-wider transition flex items-center space-x-1.5 cursor-pointer ${
-                  activeView === 'admin'
-                    ? 'bg-slate-800 text-emerald-400'
-                    : 'text-slate-450 hover:text-white'
-                }`}
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>ADMINISTRACIÓN</span>
-              </button>
-            )}
-          </nav>
-
-          {/* Action Buttons */}
-          <div className="flex items-center space-x-3">
-            {canFinalizeTurn && (
+            {/* Acciones Móviles (sm:hidden) */}
+            <div className="flex items-center space-x-1.5 flex-shrink-0 sm:hidden">
+              {canFinalizeTurn && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFinalizeError('');
+                    setShowFinalizeTurnModal(true);
+                  }}
+                  className="px-2.5 py-1.5 bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-400 border border-emerald-600/50 rounded-xl transition active:scale-95 flex items-center space-x-1 cursor-pointer text-xs font-black shadow-sm"
+                  title="Finalizar Turno e inyectar a Google Drive"
+                >
+                  <UploadCloud className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-[10px] font-black">Corte</span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => {
-                  setFinalizeError('');
-                  setShowFinalizeTurnModal(true);
-                }}
-                className="p-2.5 bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-400 border border-emerald-600/50 hover:border-emerald-500 rounded-xl transition duration-150 active:scale-95 flex items-center space-x-2 cursor-pointer shadow-md shadow-emerald-950/30"
-                title="Finalizar turno y volcar datos a Google Drive"
+                onClick={() => setShowCloseModal(true)}
+                className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-red-400 border border-slate-800 hover:border-slate-700 rounded-xl transition active:scale-95 flex items-center space-x-1 cursor-pointer text-xs font-bold"
+                title="Cerrar sesión de operario"
               >
-                <UploadCloud className="w-4 h-4 text-emerald-400" />
-                <span className="text-xs font-black tracking-wider hidden sm:inline">Finalizar Turno</span>
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="text-[10px]">Cerrar</span>
               </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setShowCloseModal(true)}
-              className="p-2.5 bg-slate-900 hover:bg-slate-800 text-red-400 border border-slate-800 hover:border-slate-700 rounded-xl transition duration-150 active:scale-95 flex items-center space-x-2 cursor-pointer"
-              title="Cerrar sesión de operario"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="text-xs font-bold hidden sm:inline">Cerrar Sesión</span>
-            </button>
+            </div>
+          </div>
+
+          {/* Fila 2 Móvil / Derecha Escritorio: Tabs de Navegación y Acciones Desktop */}
+          <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end">
+            {/* Contenedor de pestañas: overflow-x-auto whitespace-nowrap scrollbar-none flex gap-2 px-2 */}
+            <nav className="w-full md:w-auto bg-slate-900 p-1 rounded-xl border border-slate-800 overflow-x-auto whitespace-nowrap scrollbar-none flex gap-2 px-2 touch-pan-x overscroll-contain">
+              <button
+                onClick={() => setActiveView('verification')}
+                className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-black tracking-wider transition cursor-pointer flex-shrink-0 flex items-center space-x-1.5 ${
+                  activeView === 'verification'
+                    ? 'bg-slate-800 text-emerald-400 shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>VERIFICACIÓN</span>
+              </button>
+              {canAccessReports && (
+                <button
+                  onClick={() => setActiveView('reports')}
+                  className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-black tracking-wider transition flex items-center space-x-1.5 cursor-pointer flex-shrink-0 ${
+                    activeView === 'reports'
+                      ? 'bg-slate-800 text-emerald-400 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>REPORTERÍA</span>
+                </button>
+              )}
+              {canAccessAdmin && (
+                <button
+                  onClick={() => setActiveView('admin')}
+                  className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-black tracking-wider transition flex items-center space-x-1.5 cursor-pointer flex-shrink-0 ${
+                    activeView === 'admin'
+                      ? 'bg-slate-800 text-emerald-400 shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>ADMINISTRACIÓN</span>
+                </button>
+              )}
+            </nav>
+
+            {/* Acciones en Escritorio (sm:flex) */}
+            <div className="hidden sm:flex items-center space-x-2.5 flex-shrink-0">
+              {canFinalizeTurn && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFinalizeError('');
+                    setShowFinalizeTurnModal(true);
+                  }}
+                  className="p-2.5 bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-400 border border-emerald-600/50 hover:border-emerald-500 rounded-xl transition duration-150 active:scale-95 flex items-center space-x-2 cursor-pointer shadow-md shadow-emerald-950/30"
+                  title="Finalizar turno y volcar datos a Google Drive"
+                >
+                  <UploadCloud className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-black tracking-wider">Finalizar Turno</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowCloseModal(true)}
+                className="p-2.5 bg-slate-900 hover:bg-slate-800 text-red-400 border border-slate-800 hover:border-slate-700 rounded-xl transition duration-150 active:scale-95 flex items-center space-x-2 cursor-pointer"
+                title="Cerrar sesión de operario"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="text-xs font-bold">Cerrar Sesión</span>
+              </button>
+            </div>
           </div>
         </div>
       </header>
 
       {/* Main View Area */}
-      <main className="flex-1 p-6 max-w-5xl w-full mx-auto flex flex-col space-y-6">
+      <main className="flex-1 p-3 sm:p-6 max-w-5xl w-full mx-auto flex flex-col space-y-4 sm:space-y-6">
         
-        {/* Panel de Avance Global (Visible para todos los roles) */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+        {/* Panel de Avance Global (Grid compacto 2x2 en móviles, 4 cols en escritorio) */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3.5">
           {/* Eficiencia */}
-          <div className="bg-slate-800 border border-slate-700 p-4 sm:p-5 rounded-2xl sm:rounded-3xl flex items-center justify-between shadow-lg">
-            <div>
-              <span className="text-[9px] sm:text-[10px] font-black text-slate-400 block tracking-wider uppercase">EFICIENCIA GLOBAL</span>
-              <span className="text-2xl sm:text-3xl font-black text-white">{metrics.efficiency}%</span>
+          <div className="bg-slate-800 border border-slate-700 p-2.5 sm:p-5 rounded-xl sm:rounded-3xl flex items-center justify-between shadow-md sm:shadow-lg">
+            <div className="min-w-0">
+              <span className="text-[10px] sm:text-xs font-black text-slate-400 block tracking-wider uppercase truncate">EFICIENCIA GLOBAL</span>
+              <span className="text-lg font-bold sm:text-2xl md:text-3xl sm:font-black text-white leading-tight block">{metrics.efficiency}%</span>
             </div>
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-xl sm:rounded-2xl flex items-center justify-center text-sky-400">
-              <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6" />
+            <div className="w-7 h-7 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-lg sm:rounded-2xl flex items-center justify-center text-sky-400 flex-shrink-0 ml-1.5">
+              <ShieldCheck className="w-4 h-4 sm:w-6 sm:h-6" />
             </div>
           </div>
 
           {/* Registros Totales */}
-          <div className="bg-slate-800 border border-slate-700 p-4 sm:p-5 rounded-2xl sm:rounded-3xl flex items-center justify-between shadow-lg">
-            <div>
-              <span className="text-[9px] sm:text-[10px] font-black text-slate-400 block tracking-wider uppercase">REGISTROS TOTALES</span>
-              <span className="text-2xl sm:text-3xl font-black text-white">{metrics.total}</span>
+          <div className="bg-slate-800 border border-slate-700 p-2.5 sm:p-5 rounded-xl sm:rounded-3xl flex items-center justify-between shadow-md sm:shadow-lg">
+            <div className="min-w-0">
+              <span className="text-[10px] sm:text-xs font-black text-slate-400 block tracking-wider uppercase truncate">REGISTROS TOTALES</span>
+              <span className="text-lg font-bold sm:text-2xl md:text-3xl sm:font-black text-white leading-tight block">{metrics.total}</span>
             </div>
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-xl sm:rounded-2xl flex items-center justify-center text-indigo-400">
-              <Database className="w-5 h-5 sm:w-6 sm:h-6" />
+            <div className="w-7 h-7 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-lg sm:rounded-2xl flex items-center justify-center text-indigo-400 flex-shrink-0 ml-1.5">
+              <Database className="w-4 h-4 sm:w-6 sm:h-6" />
             </div>
           </div>
 
           {/* Verificados */}
-          <div className="bg-slate-800 border border-slate-700 p-4 sm:p-5 rounded-2xl sm:rounded-3xl flex items-center justify-between shadow-lg">
-            <div>
-              <span className="text-[9px] sm:text-[10px] font-black text-slate-400 block tracking-wider uppercase">VERIFICADOS</span>
-              <span className="text-2xl sm:text-3xl font-black text-emerald-400">{metrics.verified}</span>
+          <div className="bg-slate-800 border border-slate-700 p-2.5 sm:p-5 rounded-xl sm:rounded-3xl flex items-center justify-between shadow-md sm:shadow-lg">
+            <div className="min-w-0">
+              <span className="text-[10px] sm:text-xs font-black text-slate-400 block tracking-wider uppercase truncate">VERIFICADOS</span>
+              <span className="text-lg font-bold sm:text-2xl md:text-3xl sm:font-black text-emerald-400 leading-tight block">{metrics.verified}</span>
             </div>
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-xl sm:rounded-2xl flex items-center justify-center text-emerald-400">
-              <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6" />
+            <div className="w-7 h-7 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-lg sm:rounded-2xl flex items-center justify-center text-emerald-400 flex-shrink-0 ml-1.5">
+              <CheckCircle2 className="w-4 h-4 sm:w-6 sm:h-6" />
             </div>
           </div>
 
           {/* Pendientes Planta */}
-          <div className="bg-slate-800 border border-slate-700 p-4 sm:p-5 rounded-2xl sm:rounded-3xl flex items-center justify-between shadow-lg">
-            <div>
-              <span className="text-[9px] sm:text-[10px] font-black text-slate-400 block tracking-wider uppercase">PENDIENTES PLANTA</span>
-              <span className="text-2xl sm:text-3xl font-black text-yellow-400">{metrics.pending}</span>
+          <div className="bg-slate-800 border border-slate-700 p-2.5 sm:p-5 rounded-xl sm:rounded-3xl flex items-center justify-between shadow-md sm:shadow-lg">
+            <div className="min-w-0">
+              <span className="text-[10px] sm:text-xs font-black text-slate-400 block tracking-wider uppercase truncate">PENDIENTES PLANTA</span>
+              <span className="text-lg font-bold sm:text-2xl md:text-3xl sm:font-black text-yellow-400 leading-tight block">{metrics.pending}</span>
             </div>
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-xl sm:rounded-2xl flex items-center justify-center text-yellow-400">
-              <Clock className="w-5 h-5 sm:w-6 sm:h-6" />
+            <div className="w-7 h-7 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-lg sm:rounded-2xl flex items-center justify-center text-yellow-400 flex-shrink-0 ml-1.5">
+              <Clock className="w-4 h-4 sm:w-6 sm:h-6" />
             </div>
           </div>
         </div>
@@ -473,38 +512,38 @@ export default function MainDashboard() {
 
         {/* Renderizado Condicional de las Vistas */}
         {activeView === 'verification' && (
-          <div className="space-y-6 flex-1 flex flex-col justify-start">
+          <div className="space-y-4 sm:space-y-6 flex-1 flex flex-col justify-start max-w-full">
             {/* Selector de Modos (Tabs) con liberación atómica */}
-            <div className="bg-slate-950 p-1 rounded-2xl border border-slate-850 flex grid grid-cols-2 gap-2 shadow-inner">
+            <div className="bg-slate-950 p-1 rounded-2xl border border-slate-850 grid grid-cols-2 gap-1.5 sm:gap-2 shadow-inner">
               <button
                 type="button"
                 onClick={() => handleModeChange('sequential')}
-                className={`py-3.5 rounded-xl text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-2 cursor-pointer ${
+                className={`py-2.5 sm:py-3.5 rounded-xl text-xs sm:text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-1.5 sm:space-x-2 cursor-pointer ${
                   mode === 'sequential'
                     ? 'bg-slate-800 text-emerald-400 border border-slate-700 shadow-md'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
                 }`}
               >
-                <Layers className="w-4 h-4" />
-                <span>MODO 1: SECUENCIAL</span>
+                <Layers className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <span className="truncate">MODO 1: SECUENCIAL</span>
               </button>
               
               <button
                 type="button"
                 onClick={() => handleModeChange('search')}
-                className={`py-3.5 rounded-xl text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-2 cursor-pointer ${
+                className={`py-2.5 sm:py-3.5 rounded-xl text-xs sm:text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-1.5 sm:space-x-2 cursor-pointer ${
                   mode === 'search'
                     ? 'bg-slate-800 text-sky-400 border border-slate-700 shadow-md'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
                 }`}
               >
-                <Search className="w-4 h-4" />
-                <span>MODO 2: COLADA/COIL</span>
+                <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <span className="truncate">MODO 2: COLADA/COIL</span>
               </button>
             </div>
 
             {/* Selector de Diámetro Activo */}
-            <div className="space-y-3">
+            <div className="space-y-2 sm:space-y-3 max-w-full">
               <div className="flex justify-between items-center">
                 <h2 className="text-xs font-bold text-slate-400 tracking-widest uppercase flex items-center">
                   <Layers className="w-4 h-4 mr-2 text-sky-400" />
@@ -526,7 +565,7 @@ export default function MainDashboard() {
                 </div>
               ) : (
                 <div
-                  className="flex space-x-3 overflow-x-auto pb-2 scrollbar-none touch-pan-x overscroll-contain"
+                  className="flex space-x-2 sm:space-x-3 overflow-x-auto scrollbar-none flex-nowrap px-1 py-1.5 max-w-full touch-pan-x overscroll-contain"
                   style={{
                     overflowX: 'auto',
                     touchAction: 'pan-x',
@@ -538,7 +577,7 @@ export default function MainDashboard() {
                       key={d}
                       type="button"
                       onClick={() => setSelectedDiam(d)}
-                      className={`px-6 py-3 rounded-full text-sm font-black tracking-wider transition-all border whitespace-nowrap active:scale-95 cursor-pointer ${
+                      className={`px-4 sm:px-6 py-2 sm:py-3 rounded-full text-xs sm:text-sm font-black tracking-wider transition-all border whitespace-nowrap active:scale-95 cursor-pointer flex-shrink-0 ${
                         selectedDiam === d
                           ? 'bg-sky-500 text-slate-900 border-sky-400 font-extrabold shadow-lg shadow-sky-500/20'
                           : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-750 hover:text-white'
