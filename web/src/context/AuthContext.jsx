@@ -93,8 +93,8 @@ export const AuthProvider = ({ children }) => {
                 throw new Error('PIN INCORRECTO. Acceso denegado.');
             }
 
-            if (data.activo === false || (data.rol && data.rol.toUpperCase() === 'SUSPENDIDO')) {
-                throw new Error('ACCESO RESTRINGIDO. Este perfil está suspendido activamente.');
+            if (data.activo === false || data.is_active === false || (data.rol && data.rol.toUpperCase() === 'SUSPENDIDO')) {
+                throw new Error('Usuario suspendido. Consulte con el Administrador');
             }
 
             // Asegurar persistencia de device_session_id al iniciar sesión

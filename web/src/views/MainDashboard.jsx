@@ -7,7 +7,7 @@ import Mode2CoilSearch from './Mode2CoilSearch';
 import ExportView from './ExportView';
 import AdminDashboardView from './AdminDashboardView';
 import ErrorBoundary from '../components/ErrorBoundary';
-import { LogOut, RefreshCw, Shield, Layers, Search, CheckCircle2, Loader2, AlertCircle, FileSpreadsheet, Settings, UploadCloud } from 'lucide-react';
+import { LogOut, RefreshCw, Shield, Layers, Search, CheckCircle2, Loader2, AlertCircle, FileSpreadsheet, Settings, UploadCloud, Clock, ShieldCheck, Database } from 'lucide-react';
 
 export default function MainDashboard() {
   const { user, operatorId, logout, checkPermission } = useAuth();
@@ -24,7 +24,7 @@ export default function MainDashboard() {
   // Estado de sincronización en vivo
   const [queueLength, setQueueLength] = useState(sheetSyncService.getQueueLength());
   
-  // Modales y Estados de Carga
+  // Estados de Carga y Feedback
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [showFinalizeTurnModal, setShowFinalizeTurnModal] = useState(false);
   const [flushing, setFlushing] = useState(false);
@@ -33,12 +33,35 @@ export default function MainDashboard() {
   const [dashboardError, setDashboardError] = useState('');
   const [finalizeSuccessMsg, setFinalizeSuccessMsg] = useState('');
 
-  const userRole = (user?.rol || '').toLowerCase();
-  const isAdminOrSupervisor = userRole === 'admin' || userRole === 'supervisor' || userRole === 'administrador';
+  // Panel de Avance Global (Métricas exactas)
+  const [metrics, setMetrics] = useState({ total: 0, verified: 0, pending: 0, efficiency: 0 });
 
-  // 1. Obtener diámetros con lotes pendientes
+  // Matriz de Jerarquía de Roles
+  const userRole = (user?.rol || '').toLowerCase().trim();
+  const isAdmin = userRole === 'admin' || userRole === 'administrador';
+  const isSupervisor = userRole === 'supervisor';
+  const isVerificador = userRole === 'verificador';
+  const isDigitador = userRole === 'digitador';
+  const isAuxiliar = userRole === 'auxiliar';
+
+  const canAccessReports = isDigitador || isVerificador || isSupervisor || isAdmin;
+  const canFinalizeTurn = isVerificador || isSupervisor || isAdmin;
+  const canAccessAdmin = isAdmin;
+
+  // Redirección de seguridad si la vista activa no está permitida para el rol
+  useEffect(() => {
+    if (activeView === 'reports' && !canAccessReports) {
+      setActiveView('verification');
+    }
+    if (activeView === 'admin' && !canAccessAdmin) {
+      setActiveView('verification');
+    }
+  }, [activeView, canAccessReports, canAccessAdmin]);
+
+  // 1. Obtener diámetros y métricas en tiempo real
   useEffect(() => {
     fetchActiveDiameters(true);
+    fetchMetrics();
 
     // Suscribirse a cambios del servicio de sincronización (sheetSyncService)
     const unsubscribeSync = sheetSyncService.subscribe((event, data) => {
@@ -69,6 +92,7 @@ export default function MainDashboard() {
         },
         () => {
           fetchActiveDiameters(false);
+          fetchMetrics();
         }
       )
       .on(
@@ -96,6 +120,38 @@ export default function MainDashboard() {
       fetchActiveDiameters(false);
     }
   }, [activeView]);
+
+  // Consulta exacta de métricas para el Panel de Avance Global
+  const fetchMetrics = async () => {
+    try {
+      const [{ count: total, error: errTotal }, { count: verified, error: errVerif }] = await Promise.all([
+        supabase
+          .from('registros_importacion')
+          .select('id', { count: 'exact', head: true }),
+        supabase
+          .from('registros_importacion')
+          .select('id', { count: 'exact', head: true })
+          .eq('is_verified', true)
+      ]);
+
+      if (errTotal) throw errTotal;
+      if (errVerif) throw errVerif;
+
+      const totalCount = typeof total === 'number' ? total : 0;
+      const verifiedCount = typeof verified === 'number' ? verified : 0;
+      const pendingCount = Math.max(0, totalCount - verifiedCount);
+      const efficiency = totalCount > 0 ? Math.round((verifiedCount / totalCount) * 100) : 0;
+
+      setMetrics({
+        total: totalCount,
+        verified: verifiedCount,
+        pending: pendingCount,
+        efficiency
+      });
+    } catch (err) {
+      console.error('Error calculando métricas globales en MainDashboard:', err.message);
+    }
+  };
 
   const fetchActiveDiameters = async (selectFirst = false) => {
     setLoadingDiams(true);
@@ -184,8 +240,22 @@ export default function MainDashboard() {
       ...prev
     ]);
     
-    // Refrescar diámetros activos
+    // Refrescar diámetros activos y métricas globales
     fetchActiveDiameters(false);
+    fetchMetrics();
+  };
+
+  // Alternar entre Modo 1 y Modo 2 con liberación atómica de bobinas
+  const handleModeChange = async (newMode) => {
+    if (newMode === mode) return;
+    setMode(newMode);
+    try {
+      if (operatorId) {
+        await supabase.rpc('release_operator_coils', { p_operator_id: operatorId });
+      }
+    } catch (e) {
+      console.warn('Aviso: Error liberando bobinas al alternar modos:', e);
+    }
   };
 
   // Cerrar sesión con flujo incondicional a prueba de fallos de red o RPC
@@ -253,7 +323,7 @@ export default function MainDashboard() {
           <nav className="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
             <button
               onClick={() => setActiveView('verification')}
-              className={`px-4 py-2 rounded-lg text-xs font-black tracking-wider transition ${
+              className={`px-4 py-2 rounded-lg text-xs font-black tracking-wider transition cursor-pointer ${
                 activeView === 'verification'
                   ? 'bg-slate-800 text-emerald-400'
                   : 'text-slate-450 hover:text-white'
@@ -261,21 +331,23 @@ export default function MainDashboard() {
             >
               VERIFICACIÓN
             </button>
-            <button
-              onClick={() => setActiveView('reports')}
-              className={`px-4 py-2 rounded-lg text-xs font-black tracking-wider transition flex items-center space-x-1.5 ${
-                activeView === 'reports'
-                  ? 'bg-slate-800 text-emerald-400'
-                  : 'text-slate-450 hover:text-white'
-              }`}
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span>REPORTERÍA</span>
-            </button>
-            {isAdminOrSupervisor && (
+            {canAccessReports && (
+              <button
+                onClick={() => setActiveView('reports')}
+                className={`px-4 py-2 rounded-lg text-xs font-black tracking-wider transition flex items-center space-x-1.5 cursor-pointer ${
+                  activeView === 'reports'
+                    ? 'bg-slate-800 text-emerald-400'
+                    : 'text-slate-450 hover:text-white'
+                }`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>REPORTERÍA</span>
+              </button>
+            )}
+            {canAccessAdmin && (
               <button
                 onClick={() => setActiveView('admin')}
-                className={`px-4 py-2 rounded-lg text-xs font-black tracking-wider transition flex items-center space-x-1.5 ${
+                className={`px-4 py-2 rounded-lg text-xs font-black tracking-wider transition flex items-center space-x-1.5 cursor-pointer ${
                   activeView === 'admin'
                     ? 'bg-slate-800 text-emerald-400'
                     : 'text-slate-450 hover:text-white'
@@ -287,9 +359,9 @@ export default function MainDashboard() {
             )}
           </nav>
 
-          {/* Action Buttons (Sin badges visibles de cola, sync silenciosa) */}
+          {/* Action Buttons */}
           <div className="flex items-center space-x-3">
-            {isAdminOrSupervisor && (
+            {canFinalizeTurn && (
               <button
                 type="button"
                 onClick={() => setShowFinalizeTurnModal(true)}
@@ -316,6 +388,53 @@ export default function MainDashboard() {
       {/* Main View Area */}
       <main className="flex-1 p-6 max-w-5xl w-full mx-auto flex flex-col space-y-6">
         
+        {/* Panel de Avance Global (Visible para todos los roles) */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+          {/* Eficiencia */}
+          <div className="bg-slate-800 border border-slate-700 p-4 sm:p-5 rounded-2xl sm:rounded-3xl flex items-center justify-between shadow-lg">
+            <div>
+              <span className="text-[9px] sm:text-[10px] font-black text-slate-400 block tracking-wider uppercase">EFICIENCIA GLOBAL</span>
+              <span className="text-2xl sm:text-3xl font-black text-white">{metrics.efficiency}%</span>
+            </div>
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-xl sm:rounded-2xl flex items-center justify-center text-sky-400">
+              <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
+          </div>
+
+          {/* Registros Totales */}
+          <div className="bg-slate-800 border border-slate-700 p-4 sm:p-5 rounded-2xl sm:rounded-3xl flex items-center justify-between shadow-lg">
+            <div>
+              <span className="text-[9px] sm:text-[10px] font-black text-slate-400 block tracking-wider uppercase">REGISTROS TOTALES</span>
+              <span className="text-2xl sm:text-3xl font-black text-white">{metrics.total}</span>
+            </div>
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-xl sm:rounded-2xl flex items-center justify-center text-indigo-400">
+              <Database className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
+          </div>
+
+          {/* Verificados */}
+          <div className="bg-slate-800 border border-slate-700 p-4 sm:p-5 rounded-2xl sm:rounded-3xl flex items-center justify-between shadow-lg">
+            <div>
+              <span className="text-[9px] sm:text-[10px] font-black text-slate-400 block tracking-wider uppercase">VERIFICADOS</span>
+              <span className="text-2xl sm:text-3xl font-black text-emerald-400">{metrics.verified}</span>
+            </div>
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-xl sm:rounded-2xl flex items-center justify-center text-emerald-400">
+              <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
+          </div>
+
+          {/* Pendientes Planta */}
+          <div className="bg-slate-800 border border-slate-700 p-4 sm:p-5 rounded-2xl sm:rounded-3xl flex items-center justify-between shadow-lg">
+            <div>
+              <span className="text-[9px] sm:text-[10px] font-black text-slate-400 block tracking-wider uppercase">PENDIENTES PLANTA</span>
+              <span className="text-2xl sm:text-3xl font-black text-yellow-400">{metrics.pending}</span>
+            </div>
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-slate-900 border border-slate-700 rounded-xl sm:rounded-2xl flex items-center justify-center text-yellow-400">
+              <Clock className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
+          </div>
+        </div>
+
         {/* Notificación de Éxito al Finalizar Turno */}
         {finalizeSuccessMsg && (
           <div className="bg-emerald-950/80 border border-emerald-500/60 text-emerald-200 text-sm px-4 py-3.5 rounded-2xl text-center font-bold tracking-wide flex items-center justify-center space-x-2 shadow-lg shadow-emerald-950/40">
@@ -335,12 +454,12 @@ export default function MainDashboard() {
         {/* Renderizado Condicional de las Vistas */}
         {activeView === 'verification' && (
           <div className="space-y-6 flex-1 flex flex-col justify-start">
-            {/* Selector de Modos (Tabs) */}
+            {/* Selector de Modos (Tabs) con liberación atómica */}
             <div className="bg-slate-950 p-1 rounded-2xl border border-slate-850 flex grid grid-cols-2 gap-2 shadow-inner">
               <button
                 type="button"
-                onClick={() => setMode('sequential')}
-                className={`py-3.5 rounded-xl text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-2 ${
+                onClick={() => handleModeChange('sequential')}
+                className={`py-3.5 rounded-xl text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-2 cursor-pointer ${
                   mode === 'sequential'
                     ? 'bg-slate-800 text-emerald-400 border border-slate-700 shadow-md'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
@@ -352,8 +471,8 @@ export default function MainDashboard() {
               
               <button
                 type="button"
-                onClick={() => setMode('search')}
-                className={`py-3.5 rounded-xl text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-2 ${
+                onClick={() => handleModeChange('search')}
+                className={`py-3.5 rounded-xl text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-2 cursor-pointer ${
                   mode === 'search'
                     ? 'bg-slate-800 text-sky-400 border border-slate-700 shadow-md'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
@@ -503,13 +622,13 @@ export default function MainDashboard() {
           </div>
         )}
 
-        {activeView === 'reports' && (
+        {activeView === 'reports' && canAccessReports && (
           <ErrorBoundary fallbackTitle="Error al cargar Reportería">
             <ExportView />
           </ErrorBoundary>
         )}
 
-        {activeView === 'admin' && isAdminOrSupervisor && (
+        {activeView === 'admin' && canAccessAdmin && (
           <ErrorBoundary fallbackTitle="Error en el Panel de Administración">
             <AdminDashboardView />
           </ErrorBoundary>

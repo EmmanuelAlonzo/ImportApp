@@ -9,9 +9,6 @@ export default function AdminDashboardView() {
   const [users, setUsers] = useState([]);
   const [activeSheets, setActiveSheets] = useState([]);
   const [settings, setSettings] = useState(null);
-  
-  // Métricas
-  const [metrics, setMetrics] = useState({ total: 0, verified: 0, pending: 0, efficiency: 0 });
 
   // Formulario Usuario
   const [userName, setUserName] = useState('');
@@ -41,26 +38,6 @@ export default function AdminDashboardView() {
 
   useEffect(() => {
     fetchInitialData();
-
-    // Suscribirse a cambios en tiempo real en registros_importacion para mantener métricas sincronizadas
-    const metricsChannel = supabase
-      .channel('admin_metrics_realtime')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'registros_importacion',
-        },
-        () => {
-          fetchMetrics();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(metricsChannel);
-    };
   }, []);
 
   const fetchInitialData = async () => {
@@ -69,8 +46,7 @@ export default function AdminDashboardView() {
     try {
       await Promise.all([
         fetchUsers(),
-        fetchAppSettings(),
-        fetchMetrics()
+        fetchAppSettings()
       ]);
     } catch (err) {
       console.error('Error fetching admin data:', err.message);
@@ -124,37 +100,6 @@ export default function AdminDashboardView() {
         typeof s === 'string' ? { name: s, visible: true } : s
       );
       setActiveSheets(normalized);
-    }
-  };
-
-  const fetchMetrics = async () => {
-    try {
-      const [{ count: total, error: errTotal }, { count: verified, error: errVerif }] = await Promise.all([
-        supabase
-          .from('registros_importacion')
-          .select('id', { count: 'exact', head: true }),
-        supabase
-          .from('registros_importacion')
-          .select('id', { count: 'exact', head: true })
-          .eq('is_verified', true)
-      ]);
-
-      if (errTotal) throw errTotal;
-      if (errVerif) throw errVerif;
-
-      const totalCount = typeof total === 'number' ? total : 0;
-      const verifiedCount = typeof verified === 'number' ? verified : 0;
-      const pendingCount = Math.max(0, totalCount - verifiedCount);
-      const efficiency = totalCount > 0 ? Math.round((verifiedCount / totalCount) * 100) : 0;
-
-      setMetrics({
-        total: totalCount,
-        verified: verifiedCount,
-        pending: pendingCount,
-        efficiency
-      });
-    } catch (err) {
-      console.error('Error calculando métricas:', err.message);
     }
   };
 
@@ -302,29 +247,33 @@ export default function AdminDashboardView() {
     }
   };
 
-  // Toggle Suspensión de Personal (Actualización inmediata sin F5)
-  const handleToggleUserStatus = async (item) => {
-    const isSuspended = item.activo === false;
-    const newActive = isSuspended ? true : false;
-
+  // Toggle Suspensión de Personal (Confirmación estricta en Supabase)
+  const handleToggleUserStatus = async (user) => {
+    const nuevoEstado = !user.activo;
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('usuarios_app')
-        .update({ activo: newActive })
-        .eq('id', item.id);
-      
-      if (error) throw error;
+        .update({ activo: nuevoEstado })
+        .eq('id', user.id)
+        .select();
 
-      // Actualizar estado local inmediatamente para que la UI cambie al instante
+      if (error) {
+        console.error("Error al actualizar estado en Supabase:", error);
+        alert("Error al cambiar estado en base de datos: " + error.message);
+        return;
+      }
+
+      console.log("Respuesta Supabase suspension:", data);
+
+      // Solo si Supabase confirmó el cambio:
       setUsers((prev) =>
-        prev.map((u) => (u.id === item.id ? { ...u, activo: newActive } : u))
+        prev.map((u) => (u.id === user.id ? { ...u, activo: nuevoEstado } : u))
       );
-      setSuccessMsg(`Operario ${item.nombre || item.Nombre || ''} ${newActive ? 'reactivado' : 'suspendido'} exitosamente.`);
+      setSuccessMsg(`Operario ${user.nombre || user.Nombre || ''} ${nuevoEstado ? 'reactivado' : 'suspendido'} exitosamente.`);
       setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err) {
-      console.error('Error al suspender/activar operario:', err);
-      setErrorMsg(`Fallo al suspender/reactivar operario: ${err.message}`);
-      setTimeout(() => setErrorMsg(''), 5000);
+      console.error("Error al actualizar estado en Supabase:", err);
+      alert("Error al cambiar estado en base de datos: " + err.message);
     }
   };
 
@@ -334,23 +283,13 @@ export default function AdminDashboardView() {
     setClearingShipment(true);
     setErrorMsg('');
     try {
-      let { error: delError } = await supabase
+      const { error: delError } = await supabase
         .from('registros_importacion')
         .delete()
         .not('id', 'is', null);
 
-      if (delError) {
-        const fallback = await supabase
-          .from('registros_importacion')
-          .delete()
-          .neq('id', '00000000-0000-0000-0000-000000000000');
-        delError = fallback.error;
-      }
-
       if (delError) throw delError;
 
-      // Restablecer métricas a 0 de inmediato
-      setMetrics({ total: 0, verified: 0, pending: 0, efficiency: 0 });
       setShowClearShipmentModal(false);
       setConfirmDeleteInput('');
       setSuccessMsg('Datos del embarque eliminados exitosamente. El sistema está listo para un nuevo embarque.');
@@ -408,53 +347,6 @@ export default function AdminDashboardView() {
 
   return (
     <div className="space-y-6">
-      {/* Metrics Row */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {/* Efficiency */}
-        <div className="bg-slate-800 border border-slate-700 p-5 rounded-3xl flex items-center justify-between shadow-lg">
-          <div>
-            <span className="text-[10px] font-black text-slate-455 block tracking-wider uppercase">EFICIENCIA GLOBAL</span>
-            <span className="text-3xl font-black text-white">{metrics.efficiency}%</span>
-          </div>
-          <div className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-sky-400">
-            <ShieldCheck className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Total Imports */}
-        <div className="bg-slate-800 border border-slate-700 p-5 rounded-3xl flex items-center justify-between shadow-lg">
-          <div>
-            <span className="text-[10px] font-black text-slate-455 block tracking-wider uppercase">REGISTROS TOTALES</span>
-            <span className="text-3xl font-black text-white">{metrics.total}</span>
-          </div>
-          <div className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-indigo-400">
-            <Database className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Total Verified */}
-        <div className="bg-slate-800 border border-slate-700 p-5 rounded-3xl flex items-center justify-between shadow-lg">
-          <div>
-            <span className="text-[10px] font-black text-slate-455 block tracking-wider uppercase">VERIFICADOS</span>
-            <span className="text-3xl font-black text-emerald-400">{metrics.verified}</span>
-          </div>
-          <div className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-emerald-400">
-            <CheckCircle2 className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Pending */}
-        <div className="bg-slate-800 border border-slate-700 p-5 rounded-3xl flex items-center justify-between shadow-lg">
-          <div>
-            <span className="text-[10px] font-black text-slate-455 block tracking-wider uppercase">PENDIENTES PLANTA</span>
-            <span className="text-3xl font-black text-yellow-400">{metrics.pending}</span>
-          </div>
-          <div className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-2xl flex items-center justify-center text-yellow-400">
-            <Clock className="w-6 h-6" />
-          </div>
-        </div>
-      </div>
-
       {/* Messages */}
       {errorMsg && (
         <div className="bg-red-950/40 border border-red-500/50 p-4 rounded-2xl text-red-400 text-xs font-bold shadow-lg flex items-center justify-between">

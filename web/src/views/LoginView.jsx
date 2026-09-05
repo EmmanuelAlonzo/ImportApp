@@ -23,8 +23,6 @@ export default function LoginView() {
       const { data, error } = await supabase
         .from('usuarios_app')
         .select('*')
-        .eq('activo', true)
-        .neq('rol', 'SUSPENDIDO')
         .order('nombre', { ascending: true });
 
       if (error) throw error;
@@ -67,6 +65,15 @@ export default function LoginView() {
       setPin('');
       return;
     }
+
+    // Validación de usuario suspendido
+    const matchedUser = users.find((u) => String(u.id) === String(userId));
+    if (matchedUser && (matchedUser.activo === false || matchedUser.is_active === false || (matchedUser.rol && matchedUser.rol.toUpperCase() === 'SUSPENDIDO'))) {
+      setError("Usuario suspendido. Consulte con el Administrador");
+      setPin('');
+      return;
+    }
+
     setVerifying(true);
     const result = await login(userId, pinValue);
     if (!result.success) {
