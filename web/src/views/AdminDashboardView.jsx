@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { sheetSyncService } from '../services/sheetSyncService';
-import { Users, CheckCircle2, Clock, Plus, Trash2, ShieldCheck, Eye, EyeOff, Loader2, Database, RefreshCw, Folder, Save, ExternalLink, AlertCircle } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { Users, CheckCircle2, Clock, Plus, Trash2, ShieldCheck, Eye, EyeOff, Loader2, Database, RefreshCw, Folder, Save, ExternalLink, AlertCircle, AlertTriangle } from 'lucide-react';
 
 export default function AdminDashboardView() {
   const [loading, setLoading] = useState(true);
@@ -27,10 +28,39 @@ export default function AdminDashboardView() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // Contexto de autenticación y rol
+  const { user } = useAuth();
+  const isAdmin = (user?.rol || '').toLowerCase() === 'admin' || (user?.rol || '').toLowerCase() === 'administrador';
+
+  // Modal para limpieza de embarque (Zona de Peligro)
+  const [showClearShipmentModal, setShowClearShipmentModal] = useState(false);
+  const [confirmDeleteInput, setConfirmDeleteInput] = useState('');
+  const [clearingShipment, setClearingShipment] = useState(false);
+
   const roles = ['OPERADOR', 'ADMINISTRADOR', 'VERIFICADOR', 'SUPERVISOR', 'DIGITADOR', 'AUXILIAR'];
 
   useEffect(() => {
     fetchInitialData();
+
+    // Suscribirse a cambios en tiempo real en registros_importacion para mantener métricas sincronizadas
+    const metricsChannel = supabase
+      .channel('admin_metrics_realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'registros_importacion',
+        },
+        () => {
+          fetchMetrics();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(metricsChannel);
+    };
   }, []);
 
   const fetchInitialData = async () => {
@@ -98,17 +128,33 @@ export default function AdminDashboardView() {
   };
 
   const fetchMetrics = async () => {
-    const { data, error } = await supabase
-      .from('registros_importacion')
-      .select('is_verified');
-    
-    if (error) throw error;
-    if (data) {
-      const total = data.length;
-      const verified = data.filter((r) => r.is_verified).length;
-      const pending = total - verified;
-      const efficiency = total > 0 ? Math.round((verified / total) * 100) : 0;
-      setMetrics({ total, verified, pending, efficiency });
+    try {
+      const [{ count: total, error: errTotal }, { count: verified, error: errVerif }] = await Promise.all([
+        supabase
+          .from('registros_importacion')
+          .select('id', { count: 'exact', head: true }),
+        supabase
+          .from('registros_importacion')
+          .select('id', { count: 'exact', head: true })
+          .eq('is_verified', true)
+      ]);
+
+      if (errTotal) throw errTotal;
+      if (errVerif) throw errVerif;
+
+      const totalCount = typeof total === 'number' ? total : 0;
+      const verifiedCount = typeof verified === 'number' ? verified : 0;
+      const pendingCount = Math.max(0, totalCount - verifiedCount);
+      const efficiency = totalCount > 0 ? Math.round((verifiedCount / totalCount) * 100) : 0;
+
+      setMetrics({
+        total: totalCount,
+        verified: verifiedCount,
+        pending: pendingCount,
+        efficiency
+      });
+    } catch (err) {
+      console.error('Error calculando métricas:', err.message);
     }
   };
 
@@ -256,29 +302,64 @@ export default function AdminDashboardView() {
     }
   };
 
-  // Toggle Suspensión de Personal
+  // Toggle Suspensión de Personal (Actualización inmediata sin F5)
   const handleToggleUserStatus = async (item) => {
-    const currentRol = (item.rol || '').toUpperCase();
-    const currentActive = item.activo !== undefined ? item.activo : true;
-    
-    const isSuspended = currentRol === 'SUSPENDIDO' || currentActive === false;
-    const targetActive = isSuspended ? true : false;
-    const targetRole = isSuspended ? 'OPERADOR' : 'SUSPENDIDO';
+    const isSuspended = item.activo === false;
+    const newActive = isSuspended ? true : false;
 
     try {
       const { error } = await supabase
         .from('usuarios_app')
-        .update({ activo: targetActive, rol: targetRole })
+        .update({ activo: newActive })
         .eq('id', item.id);
       
       if (error) throw error;
 
-      setSuccessMsg(`Cambio de estatus aplicado a ${item.nombre || 'operario'}.`);
-      fetchUsers();
+      // Actualizar estado local inmediatamente para que la UI cambie al instante
+      setUsers((prev) =>
+        prev.map((u) => (u.id === item.id ? { ...u, activo: newActive } : u))
+      );
+      setSuccessMsg(`Operario ${item.nombre || item.Nombre || ''} ${newActive ? 'reactivado' : 'suspendido'} exitosamente.`);
       setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err) {
+      console.error('Error al suspender/activar operario:', err);
       setErrorMsg(`Fallo al suspender/reactivar operario: ${err.message}`);
       setTimeout(() => setErrorMsg(''), 5000);
+    }
+  };
+
+  // Limpiar Datos de Embarque (Solo Administrador)
+  const handleClearShipmentData = async () => {
+    if (confirmDeleteInput.trim().toUpperCase() !== 'BORRAR') return;
+    setClearingShipment(true);
+    setErrorMsg('');
+    try {
+      let { error: delError } = await supabase
+        .from('registros_importacion')
+        .delete()
+        .not('id', 'is', null);
+
+      if (delError) {
+        const fallback = await supabase
+          .from('registros_importacion')
+          .delete()
+          .neq('id', '00000000-0000-0000-0000-000000000000');
+        delError = fallback.error;
+      }
+
+      if (delError) throw delError;
+
+      // Restablecer métricas a 0 de inmediato
+      setMetrics({ total: 0, verified: 0, pending: 0, efficiency: 0 });
+      setShowClearShipmentModal(false);
+      setConfirmDeleteInput('');
+      setSuccessMsg('Datos del embarque eliminados exitosamente. El sistema está listo para un nuevo embarque.');
+      setTimeout(() => setSuccessMsg(''), 6000);
+    } catch (err) {
+      console.error('Error al limpiar datos de embarque:', err);
+      setErrorMsg(`Fallo al vaciar embarque: ${err.message}`);
+    } finally {
+      setClearingShipment(false);
     }
   };
 
@@ -536,14 +617,15 @@ export default function AdminDashboardView() {
 
                         {/* Suspender/Activar */}
                         <button
+                          type="button"
                           onClick={() => handleToggleUserStatus(item)}
-                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition ${
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black tracking-wider transition cursor-pointer ${
                             isSuspended
-                              ? 'bg-emerald-600/25 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/45'
-                              : 'bg-red-600/25 border border-red-500/40 text-red-400 hover:bg-red-600/45'
+                              ? 'bg-emerald-600/25 border border-emerald-500/50 text-emerald-400 hover:bg-emerald-600/40'
+                              : 'bg-red-600/25 border border-red-500/50 text-red-400 hover:bg-red-600/40'
                           }`}
                         >
-                          {isSuspended ? 'REACTIVAR' : 'SUSPENDER'}
+                          {isSuspended ? 'ACTIVAR' : 'SUSPENDER'}
                         </button>
 
                         {/* Eliminar */}
@@ -725,6 +807,105 @@ export default function AdminDashboardView() {
                     Cargando diámetros...
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Zona de Peligro: Gestión y Limpieza de Embarque (Solo Administrador) */}
+      {isAdmin && (
+        <div className="bg-red-950/20 border-2 border-red-900/60 rounded-3xl p-6 shadow-xl space-y-4">
+          <div className="flex items-center space-x-3 text-red-400 border-b border-red-900/40 pb-3">
+            <AlertTriangle className="w-5 h-5 shrink-0" />
+            <h3 className="text-xs font-black tracking-widest uppercase">
+              Zona de Peligro / Gestión de Embarque
+            </h3>
+          </div>
+
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-sm font-bold text-white">
+                Limpiar Datos de Embarque
+              </p>
+              <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
+                Elimina permanentemente todas las bobinas y registros del embarque actual (<code className="text-red-300">registros_importacion</code>). Las cuentas de usuario y configuraciones de planta se mantendrán intactas. Use esta opción antes de cargar un nuevo embarque.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmDeleteInput('');
+                setShowClearShipmentModal(true);
+              }}
+              className="px-5 py-3 bg-red-600/20 hover:bg-red-600 border border-red-500/60 hover:border-red-500 text-red-400 hover:text-white rounded-xl text-xs font-black tracking-wider transition duration-150 active:scale-95 flex items-center justify-center space-x-2 shrink-0 cursor-pointer shadow-lg shadow-red-950/50"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>LIMPIAR DATOS DE EMBARQUE</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Confirmación Estricta: Limpiar Embarque */}
+      {showClearShipmentModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-sm flex justify-center items-center p-6">
+          <div className="w-full max-w-md bg-slate-800 border-2 border-red-600/60 rounded-3xl p-8 shadow-2xl space-y-6">
+            <div className="w-14 h-14 bg-red-950 border border-red-500/60 rounded-2xl flex items-center justify-center mx-auto text-red-400">
+              <AlertTriangle className="w-7 h-7" />
+            </div>
+
+            <div className="text-center space-y-2">
+              <h3 className="text-lg font-black text-white tracking-wide uppercase">
+                ¿LIMPIAR DATOS DE EMBARQUE?
+              </h3>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Esta acción eliminará todos los rollos y registros de verificación de la base de datos para preparar el nuevo embarque. Esta operación <span className="text-red-400 font-bold">NO SE PUEDE DESHACER</span>.
+              </p>
+              <p className="text-xs text-slate-400 pt-2">
+                Para confirmar, escribe la palabra <strong className="text-red-400 font-black">BORRAR</strong>:
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={confirmDeleteInput}
+                onChange={(e) => setConfirmDeleteInput(e.target.value)}
+                placeholder="Escribe BORRAR"
+                autoFocus
+                className="w-full bg-slate-950 text-white text-center text-sm font-black tracking-widest rounded-xl border border-red-500/50 p-3.5 focus:border-red-400 focus:outline-none placeholder-slate-600 uppercase"
+              />
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowClearShipmentModal(false);
+                    setConfirmDeleteInput('');
+                  }}
+                  disabled={clearingShipment}
+                  className="py-3 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
+                >
+                  CANCELAR
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleClearShipmentData}
+                  disabled={confirmDeleteInput.trim().toUpperCase() !== 'BORRAR' || clearingShipment}
+                  className="py-3 bg-red-600 hover:bg-red-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:border-slate-700 border border-red-500 text-white rounded-xl text-xs font-black tracking-wider transition cursor-pointer disabled:cursor-not-allowed shadow-lg shadow-red-600/30 flex items-center justify-center space-x-1"
+                >
+                  {clearingShipment ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                      <span>BORRANDO...</span>
+                    </>
+                  ) : (
+                    <span>CONFIRMAR Y VACIAR</span>
+                  )}
+                </button>
               </div>
             </div>
           </div>

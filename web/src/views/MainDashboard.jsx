@@ -6,6 +6,7 @@ import Mode1SequentialView from './Mode1SequentialView';
 import Mode2CoilSearch from './Mode2CoilSearch';
 import ExportView from './ExportView';
 import AdminDashboardView from './AdminDashboardView';
+import ErrorBoundary from '../components/ErrorBoundary';
 import { LogOut, RefreshCw, Shield, Layers, Search, CheckCircle2, Loader2, AlertCircle, FileSpreadsheet, Settings, UploadCloud } from 'lucide-react';
 
 export default function MainDashboard() {
@@ -502,9 +503,17 @@ export default function MainDashboard() {
           </div>
         )}
 
-        {activeView === 'reports' && <ExportView />}
+        {activeView === 'reports' && (
+          <ErrorBoundary fallbackTitle="Error al cargar Reportería">
+            <ExportView />
+          </ErrorBoundary>
+        )}
 
-        {activeView === 'admin' && isAdminOrSupervisor && <AdminDashboardView />}
+        {activeView === 'admin' && isAdminOrSupervisor && (
+          <ErrorBoundary fallbackTitle="Error en el Panel de Administración">
+            <AdminDashboardView />
+          </ErrorBoundary>
+        )}
 
       </main>
 

@@ -1,29 +1,70 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { sheetSyncService } from '../services/sheetSyncService';
-import { Search, CheckCircle, Barcode, AlertTriangle } from 'lucide-react';
+import { Search, CheckCircle, Barcode, AlertTriangle, Loader2 } from 'lucide-react';
 
 export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
-  const { user } = useAuth();
+  const { user, operatorId: authOperatorId } = useAuth();
+  const operatorId = authOperatorId || user?.id || user?.nombre || (typeof localStorage !== 'undefined' ? localStorage.getItem('device_session_id') : null) || 'operador';
+
   const [pendingRolls, setPendingRolls] = useState([]);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  
+  const [reserving, setReserving] = useState(false);
+
   // Búsqueda
   const [coladaInput, setColadaInput] = useState('');
   const [coilInput, setCoilInput] = useState('');
   const [showColadaSuggestions, setShowColadaSuggestions] = useState(false);
   const [showCoilSuggestions, setShowCoilSuggestions] = useState(false);
-  
-  // Selección
+
+  // Selección y Reserva
   const [selectedRoll, setSelectedRoll] = useState(null);
+  const [reservedByOther, setReservedByOther] = useState(false);
+  const [reservedByOtherMsg, setReservedByOtherMsg] = useState('');
   const [error, setError] = useState('');
   const [reassignedMsg, setReassignedMsg] = useState('');
 
+  // Referencia a la reserva activa del operador en este modo
+  const activeReservationIdRef = useRef(null);
+
+  // Liberar la reserva en Supabase para una bobina específica
+  const releaseReservation = async (rollId) => {
+    if (!rollId) return;
+    try {
+      await supabase
+        .from('registros_importacion')
+        .update({ reserved_by: null, reserved_at: null })
+        .eq('id', rollId)
+        .eq('reserved_by', operatorId)
+        .eq('is_verified', false);
+    } catch (e) {
+      console.warn('Aviso: Error liberando reserva de bobina en Supabase:', e);
+    }
+  };
+
+  // Al cambiar de diámetro o desmontar el componente (salir del modo), limpiar cualquier reserva activa
   useEffect(() => {
+    return () => {
+      if (activeReservationIdRef.current) {
+        const idToFree = activeReservationIdRef.current;
+        activeReservationIdRef.current = null;
+        releaseReservation(idToFree);
+      }
+    };
+  }, [operatorId, selectedDiam]);
+
+  // Limpiar selección local y cargar bobinas al cambiar de diámetro
+  useEffect(() => {
+    if (activeReservationIdRef.current) {
+      releaseReservation(activeReservationIdRef.current);
+      activeReservationIdRef.current = null;
+    }
     fetchPendingRolls();
     setSelectedRoll(null);
+    setReservedByOther(false);
+    setReservedByOtherMsg('');
     setColadaInput('');
     setCoilInput('');
     setError('');
@@ -62,7 +103,8 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         .from('registros_importacion')
         .select('*')
         .eq('sheet_name', selectedDiam)
-        .eq('is_verified', false);
+        .eq('is_verified', false)
+        .order('lote', { ascending: true });
 
       if (error) throw error;
       setPendingRolls(data || []);
@@ -111,31 +153,118 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
     });
   }, [pendingRolls, coladaInput, coilInput]);
 
+  // Selección y Reserva Atómica de un Rollo
+  const handleSelectCoil = async (targetRoll) => {
+    if (!targetRoll) return;
+
+    // Si ya teníamos otro rollo reservado, liberarlo en BD
+    if (activeReservationIdRef.current && activeReservationIdRef.current !== targetRoll.id) {
+      await releaseReservation(activeReservationIdRef.current);
+      activeReservationIdRef.current = null;
+    }
+
+    setReserving(true);
+    setError('');
+    setReassignedMsg('');
+    setReservedByOther(false);
+    setReservedByOtherMsg('');
+
+    try {
+      // 1. Consultar estado fresco en BD
+      const { data: freshRecord, error: freshErr } = await supabase
+        .from('registros_importacion')
+        .select('*')
+        .eq('id', targetRoll.id)
+        .single();
+
+      if (freshErr) throw freshErr;
+
+      if (freshRecord.is_verified) {
+        setError('Esta bobina ya fue verificada por otro operario.');
+        setSelectedRoll(null);
+        return;
+      }
+
+      // 2. Verificar si está reservada por otro operador
+      const isCurrentOperator = freshRecord.reserved_by === operatorId;
+      const isReservedByAnother = Boolean(freshRecord.reserved_by && !isCurrentOperator);
+
+      if (isReservedByAnother) {
+        setReservedByOther(true);
+        setReservedByOtherMsg(`Material en proceso por otro operador (${freshRecord.reserved_by})`);
+        setSelectedRoll(freshRecord);
+        setColadaInput(freshRecord.colada || '');
+        setCoilInput(freshRecord.coil || '');
+        return;
+      }
+
+      // 3. Reservar atómicamente en Supabase si no la teníamos ya
+      if (!isCurrentOperator) {
+        const { error: reserveErr } = await supabase
+          .from('registros_importacion')
+          .update({
+            reserved_by: operatorId,
+            reserved_at: new Date().toISOString()
+          })
+          .eq('id', freshRecord.id)
+          .is('reserved_by', null);
+
+        if (reserveErr) {
+          console.warn('Aviso: Conflicto al reservar rollo:', reserveErr);
+          setReservedByOther(true);
+          setReservedByOtherMsg('Material en proceso por otro operador');
+          setSelectedRoll(freshRecord);
+          return;
+        }
+      }
+
+      // Reserva exitosa para este operador
+      activeReservationIdRef.current = freshRecord.id;
+      setReservedByOther(false);
+      setReservedByOtherMsg('');
+      setSelectedRoll(freshRecord);
+      setColadaInput(freshRecord.colada || '');
+      setCoilInput(freshRecord.coil || '');
+    } catch (err) {
+      console.error('Error al seleccionar bobina:', err);
+      setError('Error al consultar estado de la bobina: ' + err.message);
+    } finally {
+      setReserving(false);
+    }
+  };
+
+  // Deseleccionar rollo y liberar la reserva
+  const handleDeselectRoll = async () => {
+    if (activeReservationIdRef.current) {
+      const idToFree = activeReservationIdRef.current;
+      activeReservationIdRef.current = null;
+      await releaseReservation(idToFree);
+    }
+    setSelectedRoll(null);
+    setReservedByOther(false);
+    setReservedByOtherMsg('');
+  };
+
   const selectColada = (colada) => {
     setColadaInput(colada);
     setShowColadaSuggestions(false);
-    
-    // Auto seleccionar el primer lote que coincida
     const matched = pendingRolls.find((r) => r.colada === colada);
     if (matched) {
-      setSelectedRoll(matched);
-      setCoilInput(matched.coil || '');
+      handleSelectCoil(matched);
     }
   };
 
   const selectCoil = (coil) => {
     setCoilInput(coil);
     setShowCoilSuggestions(false);
-
     const matched = pendingRolls.find((r) => r.coil === coil);
     if (matched) {
-      setSelectedRoll(matched);
-      setColadaInput(matched.colada || '');
+      handleSelectCoil(matched);
     }
   };
 
   const handleVerify = async () => {
-    if (!selectedRoll) return;
+    if (!selectedRoll || reservedByOther) return;
     setConfirming(true);
     setError('');
     setReassignedMsg('');
@@ -143,19 +272,17 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
     try {
       let rollToVerify = { ...selectedRoll };
 
-      // 1. ALGORITMO DE AUTO-REASIGNACIÓN CONCURRENTE
-      // Consultamos el estado en tiempo real del ID seleccionado
+      // Consultar estado en tiempo real del ID seleccionado
       const { data: checkData, error: checkError } = await supabase
         .from('registros_importacion')
-        .select('is_verified')
+        .select('is_verified, reserved_by')
         .eq('id', selectedRoll.id)
         .single();
 
       if (checkError) throw checkError;
 
-      // Si el lote ya fue verificado por otro operario:
       if (checkData.is_verified) {
-        // Buscamos el siguiente registro pendiente en la base con la misma colada y diámetro
+        // Si ya fue verificado, buscar el siguiente pendiente con la misma colada y diámetro
         const { data: altData, error: altError } = await supabase
           .from('registros_importacion')
           .select('*')
@@ -182,6 +309,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
       // 1. Actualización optimista inmediata
       setPendingRolls((prev) => prev.filter((r) => r.id !== targetId));
       setSelectedRoll(null);
+      activeReservationIdRef.current = null;
       setColadaInput('');
       setCoilInput('');
 
@@ -192,7 +320,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         } catch (e) {}
       }
 
-      // 3. UPDATE en Supabase
+      // 3. UPDATE en Supabase liberando la reserva y marcando is_verified = true
       const { error: updateError } = await supabase
         .from('registros_importacion')
         .update({
@@ -200,6 +328,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
           verified_at: verifyTimestamp,
           verified_by: operatorName,
           reserved_by: null,
+          reserved_at: null,
           updated_at: verifyTimestamp,
         })
         .eq('id', targetId);
@@ -254,7 +383,9 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
               onChange={(e) => {
                 setColadaInput(e.target.value);
                 setShowColadaSuggestions(true);
-                if (!e.target.value) setSelectedRoll(null);
+                if (selectedRoll) {
+                  handleDeselectRoll();
+                }
               }}
               onFocus={() => setShowColadaSuggestions(true)}
               onBlur={() => setTimeout(() => setShowColadaSuggestions(false), 200)}
@@ -304,7 +435,9 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
               onChange={(e) => {
                 setCoilInput(e.target.value);
                 setShowCoilSuggestions(true);
-                if (!e.target.value) setSelectedRoll(null);
+                if (selectedRoll) {
+                  handleDeselectRoll();
+                }
               }}
               onFocus={() => setShowCoilSuggestions(true)}
               onBlur={() => setTimeout(() => setShowCoilSuggestions(false), 300)}
@@ -367,8 +500,8 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
             <p className="text-slate-400 font-bold tracking-wide">Actualizando catálogo...</p>
           </div>
         ) : selectedRoll ? (
-          <div className="bg-slate-800 rounded-3xl border-2 border-sky-500/30 shadow-2xl overflow-hidden flex flex-col">
-            {/* Header Lote */}
+          <div className="bg-slate-800 rounded-3xl border-2 border-sky-500/30 shadow-2xl overflow-hidden flex flex-col space-y-0">
+            {/* Header Lote & Deselect Action */}
             <div className="bg-slate-950 p-6 border-b border-slate-800 flex justify-between items-center">
               <div>
                 <span className="text-[10px] font-black tracking-widest text-sky-400 block uppercase">
@@ -378,10 +511,28 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
                   {selectedRoll.lote}
                 </span>
               </div>
-              <Barcode className="w-10 h-10 text-slate-600" />
+              <div className="flex items-center space-x-3">
+                <button
+                  type="button"
+                  onClick={handleDeselectRoll}
+                  className="px-3 py-1.5 bg-slate-900 hover:bg-slate-850 border border-slate-700 text-slate-400 hover:text-white rounded-xl text-xs font-bold transition flex items-center space-x-1 cursor-pointer"
+                  title="Liberar reserva y volver al catálogo"
+                >
+                  <span>✕ Cancelar Selección</span>
+                </button>
+                <Barcode className="w-10 h-10 text-slate-600 hidden sm:block" />
+              </div>
             </div>
 
-            {/* Grid */}
+            {/* Advertencia si está reservado por otro operador */}
+            {reservedByOther && (
+              <div className="bg-red-950/90 border-y border-red-500/60 p-4 text-center flex items-center justify-center space-x-2 text-red-200 font-bold text-xs tracking-wide">
+                <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
+                <span>{reservedByOtherMsg || 'Material en proceso por otro operador'}</span>
+              </div>
+            )}
+
+            {/* Grid de Detalles */}
             <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-6 bg-slate-800/40">
               <div className="space-y-1">
                 <span className="text-[10px] font-bold text-slate-400 tracking-wider block">COIL / BOBINA</span>
@@ -403,17 +554,28 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
               </div>
             </div>
 
-            {/* Confirm button */}
+            {/* Botón de Confirmación con Bloqueo si otro operador lo tiene reservado */}
             <div className="p-6 bg-slate-950 border-t border-slate-800">
               <button
+                type="button"
                 onClick={handleVerify}
-                disabled={confirming}
-                className={`w-full py-5 rounded-2xl text-base font-black tracking-widest text-slate-900 bg-sky-400 hover:bg-sky-300 active:scale-98 transition duration-150 flex items-center justify-center space-x-3 shadow-lg shadow-sky-500/10 ${
-                  confirming ? 'opacity-50 pointer-events-none' : ''
-                }`}
+                disabled={confirming || reserving || reservedByOther}
+                className={`w-full py-5 rounded-2xl text-base font-black tracking-widest text-slate-900 transition duration-150 flex items-center justify-center space-x-3 shadow-lg ${
+                  reservedByOther
+                    ? 'bg-slate-800 border border-red-500/40 text-red-400 cursor-not-allowed'
+                    : 'bg-sky-400 hover:bg-sky-300 active:scale-98 shadow-sky-500/10 cursor-pointer'
+                } ${confirming || reserving ? 'opacity-50 pointer-events-none' : ''}`}
               >
-                {confirming ? (
-                  <div className="w-6 h-6 border-3 border-slate-900 border-t-transparent rounded-full animate-spin"></div>
+                {confirming || reserving ? (
+                  <div className="flex items-center space-x-2">
+                    <Loader2 className="w-5 h-5 text-slate-900 animate-spin" />
+                    <span>{reserving ? 'RESERVANDO BOBINA...' : 'CONFIRMANDO...'}</span>
+                  </div>
+                ) : reservedByOther ? (
+                  <>
+                    <AlertTriangle className="w-5 h-5 text-red-400" />
+                    <span>MATERIAL EN PROCESO POR OTRO OPERADOR</span>
+                  </>
                 ) : (
                   <>
                     <CheckCircle className="w-6 h-6 text-slate-900" />
@@ -435,7 +597,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
                 </span>
               </div>
               <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
-                Toca cualquier bobina para seleccionar
+                Toca cualquier bobina para seleccionar y apartar
               </span>
             </div>
 
@@ -452,46 +614,52 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
                   No hay bobinas pendientes que coincidan con el filtro.
                 </div>
               ) : (
-                filteredRollsList.map((roll) => (
-                  <button
-                    key={roll.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedRoll(roll);
-                      setColadaInput(roll.colada || '');
-                      setCoilInput(roll.coil || '');
-                    }}
-                    className="w-full text-left p-3.5 hover:bg-slate-900/70 active:bg-slate-900 transition flex items-center justify-between cursor-pointer group"
-                  >
-                    <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center text-xs font-mono font-bold text-sky-400 group-hover:border-sky-500">
-                        {roll.row_number || '#'}
-                      </div>
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <span className="font-bold text-white text-sm">Lote: {roll.lote}</span>
-                          {roll.colada && (
-                            <span className="text-[9px] bg-slate-900 border border-slate-700 text-sky-300 px-1.5 py-0.5 rounded font-bold">
-                              Colada: {roll.colada}
-                            </span>
-                          )}
+                filteredRollsList.map((roll) => {
+                  const isOtherReserved = roll.reserved_by && roll.reserved_by !== operatorId;
+                  return (
+                    <button
+                      key={roll.id}
+                      type="button"
+                      onClick={() => handleSelectCoil(roll)}
+                      className={`w-full text-left p-3.5 transition flex items-center justify-between cursor-pointer group ${
+                        isOtherReserved ? 'bg-slate-900/40 opacity-70 hover:bg-slate-900/60' : 'hover:bg-slate-900/70 active:bg-slate-900'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center text-xs font-mono font-bold text-sky-400 group-hover:border-sky-500">
+                          {roll.row_number || '#'}
                         </div>
-                        <span className="text-[10px] text-slate-400">
-                          Coil: {roll.coil || 'S/N'} • {roll.sae || 'SAE'} • SKU: {roll.sku || '---'}
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <span className="font-bold text-white text-sm">Lote: {roll.lote}</span>
+                            {roll.colada && (
+                              <span className="text-[9px] bg-slate-900 border border-slate-700 text-sky-300 px-1.5 py-0.5 rounded font-bold">
+                                Colada: {roll.colada}
+                              </span>
+                            )}
+                            {isOtherReserved && (
+                              <span className="text-[8px] bg-yellow-950/80 border border-yellow-500/50 text-yellow-400 px-1.5 py-0.5 rounded font-bold uppercase">
+                                En proceso
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400">
+                            Coil: {roll.coil || 'S/N'} • {roll.sae || 'SAE'} • SKU: {roll.sku || '---'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="font-black text-slate-200 text-sm block">
+                          {roll.peso ? parseFloat(roll.peso).toLocaleString() : '0.00'} KG
+                        </span>
+                        <span className={`text-[10px] font-bold group-hover:underline ${isOtherReserved ? 'text-yellow-400' : 'text-sky-400'}`}>
+                          {isOtherReserved ? 'EN PROCESO →' : 'SELECCIONAR →'}
                         </span>
                       </div>
-                    </div>
-
-                    <div className="text-right">
-                      <span className="font-black text-slate-200 text-sm block">
-                        {roll.peso ? parseFloat(roll.peso).toLocaleString() : '0.00'} KG
-                      </span>
-                      <span className="text-[10px] text-sky-400 font-bold group-hover:underline">
-                        SELECCIONAR →
-                      </span>
-                    </div>
-                  </button>
-                ))
+                    </button>
+                  );
+                })
               )}
             </div>
           </div>
