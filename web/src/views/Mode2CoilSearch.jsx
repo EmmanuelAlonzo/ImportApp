@@ -337,17 +337,30 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
       }
 
       // 3. UPDATE en Supabase liberando la reserva y marcando is_verified = true
-      const { error: updateError } = await supabase
+      const updatePayload = {
+        is_verified: true,
+        verified_at: verifyTimestamp,
+        verified_by: operatorName,
+        verification_mode: 'Modo 2',
+        reserved_by: null,
+        reserved_at: null,
+        updated_at: verifyTimestamp,
+      };
+
+      let { error: updateError } = await supabase
         .from('registros_importacion')
-        .update({
-          is_verified: true,
-          verified_at: verifyTimestamp,
-          verified_by: operatorName,
-          reserved_by: null,
-          reserved_at: null,
-          updated_at: verifyTimestamp,
-        })
+        .update(updatePayload)
         .eq('id', targetId);
+
+      // Fallback si la columna verification_mode aún no existe en la base de datos
+      if (updateError && (updateError.code === 'PGRST204' || updateError.message?.includes('verification_mode'))) {
+        delete updatePayload.verification_mode;
+        const { error: fallbackErr } = await supabase
+          .from('registros_importacion')
+          .update(updatePayload)
+          .eq('id', targetId);
+        updateError = fallbackErr;
+      }
 
       if (updateError) {
         console.error('Error al actualizar bobina en Supabase:', updateError);
@@ -362,6 +375,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         is_verified: true,
         verified_at: verifyTimestamp,
         verified_by: operatorName,
+        verification_mode: 'Modo 2',
         sheet_name: rollToVerify.sheet_name || selectedDiam,
         spreadsheet_id: rollToVerify.spreadsheet_id,
       };

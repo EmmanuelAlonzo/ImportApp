@@ -35,3 +35,8 @@ BEGIN
     END IF;
 END;
 $$;
+
+-- 3. Agregar columna para trazabilidad de modo de verificación
+ALTER TABLE IF EXISTS registros_importacion
+ADD COLUMN IF NOT EXISTS verification_mode TEXT;
+
