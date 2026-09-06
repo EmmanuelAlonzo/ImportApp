@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { sheetSyncService } from '../services/sheetSyncService';
 import { useAuth } from '../context/AuthContext';
-import { Users, CheckCircle2, Clock, Plus, Trash2, ShieldCheck, Eye, EyeOff, Loader2, Database, RefreshCw, Folder, Save, ExternalLink, AlertCircle, AlertTriangle } from 'lucide-react';
+import { Users, CheckCircle2, Clock, Plus, Trash2, ShieldCheck, Eye, EyeOff, Loader2, Database, RefreshCw, Folder, Save, ExternalLink, AlertCircle, AlertTriangle, KeyRound } from 'lucide-react';
 
 export default function AdminDashboardView() {
   const [loading, setLoading] = useState(true);
@@ -27,7 +27,10 @@ export default function AdminDashboardView() {
 
   // Contexto de autenticación y rol
   const { user } = useAuth();
-  const isAdmin = (user?.rol || '').toLowerCase() === 'admin' || (user?.rol || '').toLowerCase() === 'administrador';
+  const userRoleVal = (user?.rol || '').toLowerCase().trim();
+  const isAdmin = userRoleVal === 'admin' || userRoleVal === 'administrador';
+  const isSupervisor = userRoleVal === 'supervisor';
+  const canResetPin = isAdmin || isSupervisor;
 
   // Modal para limpieza de embarque (Zona de Peligro)
   const [showClearShipmentModal, setShowClearShipmentModal] = useState(false);
@@ -276,6 +279,55 @@ export default function AdminDashboardView() {
     }
   };
 
+  // Reseteo de PIN a '0000' y cambio obligatorio (Admin y Supervisor)
+  const handleResetPin = async (targetUser) => {
+    const targetName = targetUser.nombre || targetUser.Nombre || 'este operario';
+    if (!window.confirm(`¿Seguro que deseas resetear el PIN de "${targetName}" a '0000'?\nEl operario estará obligado a definir un nuevo PIN en su próximo inicio de sesión.`)) {
+      return;
+    }
+
+    try {
+      let resetError = null;
+      try {
+        const { error } = await supabase
+          .from('usuarios_app')
+          .update({
+            pin: '0000',
+            requires_pin_reset: true
+          })
+          .eq('id', targetUser.id);
+        resetError = error;
+      } catch (err) {
+        resetError = err;
+      }
+
+      // Fallback si la columna requires_pin_reset aún no existe en la BD
+      if (resetError && (resetError.code === 'PGRST204' || resetError.message?.includes('requires_pin_reset'))) {
+        const { error: fallbackErr } = await supabase
+          .from('usuarios_app')
+          .update({
+            pin: '0000'
+          })
+          .eq('id', targetUser.id);
+        if (fallbackErr) throw fallbackErr;
+      } else if (resetError) {
+        throw resetError;
+      }
+
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === targetUser.id ? { ...u, pin: '0000', requires_pin_reset: true } : u
+        )
+      );
+      setSuccessMsg(`PIN de "${targetName}" reseteado a '0000' (cambio obligatorio en próximo inicio).`);
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (err) {
+      console.error('Error al resetear PIN del operario:', err);
+      setErrorMsg(`No se pudo resetear el PIN: ${err.message}`);
+      setTimeout(() => setErrorMsg(''), 5000);
+    }
+  };
+
   // Limpiar Datos de Embarque (Solo Administrador)
   const handleClearShipmentData = async () => {
     if (confirmDeleteInput.trim().toUpperCase() !== 'BORRAR') return;
@@ -493,6 +545,11 @@ export default function AdminDashboardView() {
                               BAJA
                             </span>
                           )}
+                          {(item.requires_pin_reset || item.pin === '0000') && (
+                            <span className="text-[8px] bg-amber-950 border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded font-black tracking-wider uppercase">
+                              PIN RESET PENDIENTE
+                            </span>
+                          )}
                         </div>
                         <span className="text-[10px] text-slate-550 font-bold uppercase tracking-wider">
                           {isSuspended ? 'Rango Suspendido' : role} • PIN: {item.pin}
@@ -512,6 +569,19 @@ export default function AdminDashboardView() {
                         >
                           EDITAR
                         </button>
+
+                        {/* Resetear PIN (Admin y Supervisor) */}
+                        {canResetPin && (
+                          <button
+                            type="button"
+                            onClick={() => handleResetPin(item)}
+                            className="px-2.5 py-1.5 bg-amber-950/40 hover:bg-amber-900/60 border border-amber-500/40 text-amber-300 rounded-lg text-[10px] font-black tracking-wider transition cursor-pointer flex items-center space-x-1"
+                            title="Resetear PIN a 0000"
+                          >
+                            <KeyRound className="w-3 h-3" />
+                            <span>RESETEAR PIN</span>
+                          </button>
+                        )}
 
                         {/* Suspender/Activar */}
                         <button

@@ -134,6 +134,41 @@ export default function MainDashboard() {
     };
   }, [user?.id]);
 
+  // Suscripción Realtime a usuarios_app para control de sesión única y desalojo automático
+  useEffect(() => {
+    if (!user?.id) return;
+    let isEvicted = false;
+
+    const userChannel = supabase
+      .channel(`user_session_${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'usuarios_app',
+          filter: `id=eq.${user.id}`,
+        },
+        (payload) => {
+          if (isEvicted) return;
+          const currentToken = sessionStorage.getItem('session_token');
+          const updatedToken = payload.new?.session_token;
+
+          // Si session_token cambia o pasa a null desde otro equipo y difiere del token local
+          if (currentToken && updatedToken !== currentToken) {
+            isEvicted = true;
+            alert('Tu sesión fue transferida a otro dispositivo');
+            logout();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(userChannel);
+    };
+  }, [user?.id, logout]);
+
   // Refrescar diámetros automáticamente al navegar a la vista de verificación
   useEffect(() => {
     if (activeView === 'verification') {
@@ -173,7 +208,7 @@ export default function MainDashboard() {
     }
   };
 
-  const fetchActiveDiameters = async (selectFirst = false) => {
+  const fetchActiveDiameters = async (_selectFirst = false) => {
     setLoadingDiams(true);
     try {
       // 1. Obtener diámetros configurados y visibles en app_settings
@@ -238,13 +273,16 @@ export default function MainDashboard() {
       const uniqueDiams = [...new Set(combined)].filter(Boolean);
       setDiameters(uniqueDiams);
 
-      if (uniqueDiams.length > 0) {
-        if (selectFirst || !selectedDiam || !uniqueDiams.includes(selectedDiam)) {
-          setSelectedDiam(uniqueDiams[0]);
+      // 4. Verificación del estado previo de selectedDiameter:
+      // Si selectedDiameter ya tiene un valor y ese valor aún existe en el array entrante, CONSÉRVALO.
+      // Solo selecciona uniqueDiams[0] si selectedDiameter es null, vacío o si ya no existe en el catálogo.
+      setSelectedDiam((prevDiam) => {
+        if (uniqueDiams.length === 0) return '';
+        if (prevDiam && uniqueDiams.includes(prevDiam)) {
+          return prevDiam;
         }
-      } else {
-        setSelectedDiam('');
-      }
+        return uniqueDiams[0];
+      });
     } catch (err) {
       console.error('Error al cargar diámetros activos:', err.message);
     } finally {
