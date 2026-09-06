@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { sheetSyncService } from '../services/sheetSyncService';
@@ -47,10 +47,8 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Referencias para timers debounce y control de reserva
+  // Referencias para timers y control de reserva
   const coilInputRef = useRef(null);
-  const coladaDebounceRef = useRef(null);
-  const coilDebounceRef = useRef(null);
   const activeReservationIdRef = useRef(null);
 
   // Liberar bobina apartada en Supabase
@@ -75,8 +73,6 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         activeReservationIdRef.current = null;
         releaseReservation(idToFree);
       }
-      if (coladaDebounceRef.current) clearTimeout(coladaDebounceRef.current);
-      if (coilDebounceRef.current) clearTimeout(coilDebounceRef.current);
     };
   }, []);
 
@@ -100,99 +96,98 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
   }, [selectedDiam]);
 
   // -------------------------------------------------------------
-  // 2. LÓGICA DE CONSULTA CON DEBOUNCE (200 ms)
+  // 1. CONSULTA BLINDADA DE SUGERENCIAS (Conversión de tipos segura)
   // -------------------------------------------------------------
-  // Input Colada (onChange >= 2 caracteres)
-  const handleColadaChange = (e) => {
-    const val = e.target.value;
-    setSearchColada(val);
-    setError('');
-    setSuccessMsg('');
-    setDisambiguationOptions([]);
-
-    if (coladaDebounceRef.current) clearTimeout(coladaDebounceRef.current);
-
-    const trimmed = val.trim();
-    if (trimmed.length < 2) {
+  // Al buscar Colada
+  const fetchColadaSug = async (val) => {
+    if (!val || val.trim().length < 2) {
       setColadaSuggestions([]);
       setShowColadaMenu(false);
       return;
     }
+    if (!selectedDiam) return;
+    try {
+      // Traer candidatos filtrando por sheet_name y no verificados
+      let { data, error: qErr } = await supabase
+        .from('registros_importacion')
+        .select('id, colada, coil, lote, peso, sae, sku')
+        .eq('sheet_name', selectedDiam)
+        .eq('is_verified', false)
+        .is('reserved_by', null)
+        .limit(40);
 
-    coladaDebounceRef.current = setTimeout(async () => {
-      if (!selectedDiam) return;
-      try {
-        const { data, error: qErr } = await supabase
+      if (qErr) {
+        // Fallback genérico select *
+        const res = await supabase
           .from('registros_importacion')
-          .select('id, colada, coil, lote, peso, sae, sku')
+          .select('*')
           .eq('sheet_name', selectedDiam)
           .eq('is_verified', false)
           .is('reserved_by', null)
-          .ilike('colada', `${trimmed}%`)
-          .limit(6);
-
-        if (!qErr && data && data.length > 0) {
-          setColadaSuggestions(data);
-          setShowColadaMenu(true);
-        } else {
-          setColadaSuggestions([]);
-          setShowColadaMenu(false);
-        }
-      } catch (err) {
-        console.warn('Error en sugerencias de Colada:', err);
+          .limit(40);
+        data = res.data;
       }
-    }, 200);
+
+      // Filtrar en memoria como String para evitar fallos de tipo en PostgreSQL
+      const term = val.trim().toLowerCase();
+      const matches = (data || []).filter((item) =>
+        String(item.colada || '').toLowerCase().includes(term)
+      ).slice(0, 6);
+
+      setColadaSuggestions(matches);
+      setShowColadaMenu(matches.length > 0);
+    } catch (err) {
+      console.error('Error buscando sugerencias de colada:', err);
+    }
   };
 
-  // Input Coil (onChange >= 1 caracter)
-  const handleCoilChange = (e) => {
-    const val = e.target.value;
-    setSearchCoil(val);
-    setError('');
-    setSuccessMsg('');
-    setDisambiguationOptions([]);
-
-    if (coilDebounceRef.current) clearTimeout(coilDebounceRef.current);
-
-    const trimmed = val.trim();
-    if (trimmed.length < 1) {
+  // Al buscar Coil
+  const fetchCoilSug = async (val) => {
+    if (!val || val.trim().length < 1) {
       setCoilSuggestions([]);
       setShowCoilMenu(false);
       return;
     }
+    if (!selectedDiam) return;
+    try {
+      let { data, error: qErr } = await supabase
+        .from('registros_importacion')
+        .select('id, colada, coil, lote, peso, sae, sku')
+        .eq('sheet_name', selectedDiam)
+        .eq('is_verified', false)
+        .is('reserved_by', null)
+        .limit(40);
 
-    coilDebounceRef.current = setTimeout(async () => {
-      if (!selectedDiam) return;
-      try {
-        const { data, error: qErr } = await supabase
+      if (qErr) {
+        const res = await supabase
           .from('registros_importacion')
-          .select('id, colada, coil, lote, peso, sae, sku')
+          .select('*')
           .eq('sheet_name', selectedDiam)
           .eq('is_verified', false)
           .is('reserved_by', null)
-          .ilike('coil', `${trimmed}%`)
-          .limit(6);
-
-        if (!qErr && data && data.length > 0) {
-          setCoilSuggestions(data);
-          setShowCoilMenu(true);
-        } else {
-          setCoilSuggestions([]);
-          setShowCoilMenu(false);
-        }
-      } catch (err) {
-        console.warn('Error en sugerencias de Coil:', err);
+          .limit(40);
+        data = res.data;
       }
-    }, 200);
+
+      const term = val.trim().toLowerCase();
+      const matches = (data || []).filter((item) =>
+        String(item.coil || '').toLowerCase().includes(term)
+      ).slice(0, 6);
+
+      setCoilSuggestions(matches);
+      setShowCoilMenu(matches.length > 0);
+    } catch (err) {
+      console.error('Error buscando sugerencias de coil:', err);
+    }
   };
 
   // -------------------------------------------------------------
-  // 3. APARTAR BOBINA DIRECTAMENTE (handleSelectCoilDirect)
+  // 2. APARTAR BOBINA DIRECTAMENTE (handleSelectCoilDirect)
   // -------------------------------------------------------------
   const handleSelectCoilDirect = async (item) => {
     if (!item?.id) return;
-    setSearchColada(item.colada || '');
-    setSearchCoil(item.coil || '');
+    setSearchColada(String(item.colada || '').trim());
+    setSearchCoil(String(item.coil || '').trim());
     setShowColadaMenu(false);
     setShowCoilMenu(false);
     await claimSpecificCoil(item);
@@ -241,8 +236,8 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
       const claimedRoll = updateData[0];
       activeReservationIdRef.current = claimedRoll.id;
       setSelectedRoll(claimedRoll);
-      setSearchColada(claimedRoll.colada || '');
-      setSearchCoil(claimedRoll.coil || '');
+      setSearchColada(String(claimedRoll.colada || '').trim());
+      setSearchCoil(String(claimedRoll.coil || '').trim());
       setError('');
 
       if (navigator.vibrate) {
@@ -259,15 +254,15 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
   };
 
   // -------------------------------------------------------------
-  // 4. BÚSQUEDA DIRECTA (Al presionar Enter o botón BUSCAR)
+  // 3. BÚSQUEDA DIRECTA (Al presionar Enter o botón BUSCAR)
   // -------------------------------------------------------------
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
     setShowColadaMenu(false);
     setShowCoilMenu(false);
 
-    const coladaTrimmed = searchColada.trim();
-    const coilTrimmed = searchCoil.trim();
+    const coladaTrimmed = searchColada.trim().toLowerCase();
+    const coilTrimmed = searchCoil.trim().toLowerCase();
 
     if (!coladaTrimmed && !coilTrimmed) {
       setError('Ingresa la Colada o el Coil para buscar.');
@@ -292,23 +287,13 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
     setDisambiguationOptions([]);
 
     try {
-      let query = supabase
+      const { data, error: searchError } = await supabase
         .from('registros_importacion')
         .select('*')
         .eq('sheet_name', selectedDiam)
         .eq('is_verified', false)
-        .is('reserved_by', null);
-
-      if (coladaTrimmed) {
-        query = query.ilike('colada', `%${coladaTrimmed}%`);
-      }
-      if (coilTrimmed) {
-        query = query.ilike('coil', `%${coilTrimmed}%`);
-      }
-
-      const { data, error: searchError } = await query
-        .order('lote', { ascending: true })
-        .limit(20);
+        .is('reserved_by', null)
+        .limit(100);
 
       if (searchError) {
         console.error('Error al buscar bobinas:', searchError);
@@ -316,20 +301,27 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         return;
       }
 
-      if (!data || data.length === 0) {
+      // Filtrar en memoria para asegurar compatibilidad de tipos (números, strings)
+      const filtered = (data || []).filter((item) => {
+        const matchColada = !coladaTrimmed || String(item.colada || '').toLowerCase().includes(coladaTrimmed);
+        const matchCoil = !coilTrimmed || String(item.coil || '').toLowerCase().includes(coilTrimmed);
+        return matchColada && matchCoil;
+      });
+
+      if (!filtered || filtered.length === 0) {
         setError('Coil no encontrado o ya verificado por otro operario');
         setSelectedRoll(null);
         return;
       }
 
       // Caso 1: Coincidencia única
-      if (data.length === 1) {
-        await claimSpecificCoil(data[0]);
+      if (filtered.length === 1) {
+        await claimSpecificCoil(filtered[0]);
         return;
       }
 
       // Caso 2: Múltiples coincidencias -> Desplegar opciones
-      setDisambiguationOptions(data);
+      setDisambiguationOptions(filtered);
     } catch (err) {
       console.error('Excepción en handleSearch:', err);
       setError('Error al realizar la búsqueda.');
@@ -350,7 +342,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
   };
 
   // -------------------------------------------------------------
-  // 5. CONFIRMAR Y GUARDAR VERIFICACIÓN
+  // 4. CONFIRMAR Y GUARDAR VERIFICACIÓN
   // -------------------------------------------------------------
   const handleVerify = async () => {
     if (!selectedRoll) return;
@@ -430,7 +422,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
   };
 
   return (
-    <div className="space-y-6 relative">
+    <div className="space-y-6 relative overflow-visible">
       {/* Formulario de Búsqueda y Sugerencias */}
       <form
         onSubmit={handleSearch}
@@ -440,7 +432,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
             setShowCoilMenu(false);
           }
         }}
-        className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-4 relative"
+        className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-4 relative overflow-visible"
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
           <div className="flex items-center space-x-2">
@@ -454,9 +446,9 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative overflow-visible">
           {/* Input Colada con Menú Flotante */}
-          <div className="space-y-1.5 relative">
+          <div className="space-y-1.5 relative overflow-visible">
             <label className="block text-[10px] font-black text-slate-400 tracking-wider uppercase">
               Colada
             </label>
@@ -464,11 +456,14 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
               <input
                 type="text"
                 value={searchColada}
-                onChange={handleColadaChange}
-                onFocus={() => {
-                  if (coladaSuggestions.length > 0) setShowColadaMenu(true);
+                onChange={(e) => {
+                  setSearchColada(e.target.value);
+                  fetchColadaSug(e.target.value);
                 }}
-                onBlur={() => setTimeout(() => { setShowColadaMenu(false); setShowCoilMenu(false); }, 200)}
+                onFocus={() => {
+                  if (searchColada.trim().length >= 2) fetchColadaSug(searchColada);
+                }}
+                onBlur={() => setTimeout(() => setShowColadaMenu(false), 200)}
                 placeholder="Escribe colada (mín. 2 letras/números)..."
                 className="w-full bg-slate-950 text-white rounded-xl border border-slate-700 p-3.5 pl-11 font-bold text-sm focus:border-sky-400 focus:outline-none transition"
                 disabled={searching || confirming}
@@ -492,7 +487,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
 
             {/* Menú Flotante de Colada */}
             {showColadaMenu && coladaSuggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl max-h-56 overflow-y-auto">
+              <div className="absolute left-0 right-0 top-full mt-1 z-[100] bg-slate-900 border border-blue-500/40 rounded-lg shadow-2xl overflow-hidden max-h-56 overflow-y-auto">
                 {coladaSuggestions.map((item) => (
                   <div
                     key={item.id}
@@ -501,7 +496,9 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
                     className="p-3 hover:bg-blue-600/30 cursor-pointer border-b border-slate-800 text-sm flex justify-between items-center text-slate-200"
                   >
                     <span>Colada: <strong>{item.colada}</strong> ➜ Coil #{item.coil}</span>
-                    <span className="text-xs bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono">{item.peso || item.peso_neto} kg</span>
+                    <span className="text-xs bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono">
+                      {item.peso || item.peso_neto} kg
+                    </span>
                   </div>
                 ))}
               </div>
@@ -509,7 +506,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
           </div>
 
           {/* Input Coil con Menú Flotante */}
-          <div className="space-y-1.5 relative">
+          <div className="space-y-1.5 relative overflow-visible">
             <label className="block text-[10px] font-black text-slate-400 tracking-wider uppercase">
               Coil
             </label>
@@ -518,11 +515,14 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
                 ref={coilInputRef}
                 type="text"
                 value={searchCoil}
-                onChange={handleCoilChange}
-                onFocus={() => {
-                  if (coilSuggestions.length > 0) setShowCoilMenu(true);
+                onChange={(e) => {
+                  setSearchCoil(e.target.value);
+                  fetchCoilSug(e.target.value);
                 }}
-                onBlur={() => setTimeout(() => { setShowColadaMenu(false); setShowCoilMenu(false); }, 200)}
+                onFocus={() => {
+                  if (searchCoil.trim().length >= 1) fetchCoilSug(searchCoil);
+                }}
+                onBlur={() => setTimeout(() => setShowCoilMenu(false), 200)}
                 placeholder="Escribe o escanea el Coil..."
                 className="w-full bg-slate-950 text-white rounded-xl border border-slate-700 p-3.5 pl-11 font-bold text-sm focus:border-sky-400 focus:outline-none transition"
                 disabled={searching || confirming}
@@ -546,7 +546,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
 
             {/* Menú Flotante de Coil */}
             {showCoilMenu && coilSuggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl max-h-56 overflow-y-auto">
+              <div className="absolute left-0 right-0 top-full mt-1 z-[100] bg-slate-900 border border-blue-500/40 rounded-lg shadow-2xl overflow-hidden max-h-56 overflow-y-auto">
                 {coilSuggestions.map((item) => (
                   <div
                     key={item.id}
@@ -555,7 +555,9 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
                     className="p-3 hover:bg-blue-600/30 cursor-pointer border-b border-slate-800 text-sm flex justify-between items-center text-slate-200"
                   >
                     <span>Coil <strong>#{item.coil}</strong> ➜ Colada: {item.colada}</span>
-                    <span className="text-xs bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono">{item.peso || item.peso_neto} kg</span>
+                    <span className="text-xs bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono">
+                      {item.peso || item.peso_neto} kg
+                    </span>
                   </div>
                 ))}
               </div>
@@ -625,38 +627,42 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
-            {disambiguationOptions.map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => claimSpecificCoil(opt)}
-                className="p-4 bg-slate-900/90 hover:bg-slate-850 active:bg-slate-800 border border-amber-500/40 hover:border-amber-400 rounded-2xl text-left transition flex flex-col justify-between space-y-2 cursor-pointer group shadow-md"
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <span className="text-[10px] font-black uppercase text-amber-400 tracking-wider block">
-                      Coil #{opt.coil || 'S/N'}
-                    </span>
-                    <span className="text-sm font-black text-white">
-                      Lote {opt.lote}
+            {disambiguationOptions.map((opt) => {
+              const pesoVal = opt.peso_neto || opt.peso;
+              const pesoTxt = pesoVal ? parseFloat(pesoVal).toLocaleString() : '0.00';
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => claimSpecificCoil(opt)}
+                  className="p-4 bg-slate-900/90 hover:bg-slate-850 active:bg-slate-800 border border-amber-500/40 hover:border-amber-400 rounded-2xl text-left transition flex flex-col justify-between space-y-2 cursor-pointer group shadow-md"
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-amber-400 tracking-wider block">
+                        Coil #{opt.coil || 'S/N'}
+                      </span>
+                      <span className="text-sm font-black text-white">
+                        Lote {opt.lote}
+                      </span>
+                    </div>
+                    <span className="text-xs font-black text-emerald-400">
+                      ({pesoTxt} kg)
                     </span>
                   </div>
-                  <span className="text-xs font-black text-emerald-400">
-                    ({opt.peso ? `${parseFloat(opt.peso).toLocaleString()} kg` : '0.00 kg'})
-                  </span>
-                </div>
 
-                <div className="text-[11px] text-slate-300 bg-slate-950/60 p-2 rounded-lg border border-slate-800/80 flex justify-between items-center">
-                  <span>Colada: <strong className="text-sky-300">{opt.colada || '---'}</strong></span>
-                  <span className="text-[10px] text-slate-400">{opt.sae || 'Acero Estándar'}</span>
-                </div>
+                  <div className="text-[11px] text-slate-300 bg-slate-950/60 p-2 rounded-lg border border-slate-800/80 flex justify-between items-center">
+                    <span>Colada: <strong className="text-sky-300">{opt.colada || '---'}</strong></span>
+                    <span className="text-[10px] text-slate-400">{opt.sae || 'Acero Estándar'}</span>
+                  </div>
 
-                <div className="w-full py-1.5 px-3 bg-amber-500/20 group-hover:bg-amber-500 group-hover:text-slate-950 text-amber-300 text-[10px] font-black uppercase tracking-wider rounded-lg transition flex items-center justify-center space-x-1">
-                  <span>Apartar este Coil</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </div>
-              </button>
-            ))}
+                  <div className="w-full py-1.5 px-3 bg-amber-500/20 group-hover:bg-amber-500 group-hover:text-slate-950 text-amber-300 text-[10px] font-black uppercase tracking-wider rounded-lg transition flex items-center justify-center space-x-1">
+                    <span>Apartar este Coil</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
