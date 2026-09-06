@@ -64,13 +64,13 @@ export default function Mode1SequentialView({ selectedDiam, onVerifySuccess }) {
     };
   }, [selectedDiam]);
 
-  // Reclamar la siguiente bobina con restricción estricta de 1 bobina por operario
+  // Reclamar la siguiente bobina mediante la RPC atómica del servidor
   const claimNextCoil = async (showLoading = true) => {
-    if (!selectedDiam) return;
+    if (!selectedDiam || !user?.id) return;
 
-    // Evitar ejecuciones simultáneas / dobles llamadas consecutivas en useEffect o montaje
+    // Evitar ejecuciones simultáneas / dobles llamadas consecutivas en montaje
     if (isClaimingRef.current) {
-      console.log('claimNextCoil ya en progreso, ignorando llamada duplicada.');
+      console.log('claimNextCoil ya en progreso, ignorando llamada redundante.');
       return;
     }
     isClaimingRef.current = true;
@@ -79,151 +79,22 @@ export default function Mode1SequentialView({ selectedDiam, onVerifySuccess }) {
     setError('');
 
     try {
-      const activeOpId = String(operatorId || user?.id || user?.nombre || sessionStorage.getItem('device_session_id') || localStorage.getItem('device_session_id'));
-      const operatorIdentifier = user?.id ? String(user.id) : activeOpId;
+      const { data, error } = await supabase.rpc('claim_next_coil_atomic', {
+        p_operator_id: user.id.toString(),
+        p_sheet_name: selectedDiam
+      });
 
-      // 1. RESTRICCIÓN ESTRICTA: Consultar primero si el usuario YA TIENE una bobina reservada pendiente
-      // (reserved_by === user.id y is_verified === false)
-      const idCandidates = [
-        user?.id ? String(user.id) : null,
-        activeOpId,
-        user?.nombre ? String(user.nombre) : null,
-        operatorId ? String(operatorId) : null,
-      ].filter((v, idx, arr) => v && arr.indexOf(v) === idx);
-
-      let existingQuery = supabase
-        .from('registros_importacion')
-        .select('*')
-        .eq('is_verified', false);
-
-      if (idCandidates.length === 1) {
-        existingQuery = existingQuery.eq('reserved_by', idCandidates[0]);
-      } else {
-        existingQuery = existingQuery.or(idCandidates.map((id) => `reserved_by.eq.${id}`).join(','));
-      }
-
-      const { data: existingCoils, error: existErr } = await existingQuery.order('reserved_at', { ascending: false });
-
-      if (!existErr && existingCoils && existingCoils.length > 0) {
-        // Si ya tiene una bobina asignada, NO reserves otra: reutiliza y muestra esa bobina en pantalla
-        const assignedCoil = existingCoils.find((c) => c.sheet_name === selectedDiam) || existingCoils[0];
-
-        // Si hubiera más de una reserva activa por anomalías pasadas, depurar las excedentes
-        if (existingCoils.length > 1) {
-          const surplusIds = existingCoils.filter((c) => c.id !== assignedCoil.id).map((c) => c.id);
-          try {
-            await supabase
-              .from('registros_importacion')
-              .update({ reserved_by: null, reserved_at: null })
-              .in('id', surplusIds)
-              .eq('is_verified', false);
-          } catch (cleanErr) {
-            console.warn('Aviso limpiando reservas duplicadas previas:', cleanErr);
-          }
-        }
-
-        setCurrentCoil(assignedCoil);
-        await fetchUpcomingRolls(assignedCoil.id);
+      if (error) {
+        console.error("Error al reclamar bobina atómica:", error);
+        setError("Error al reclamar bobina atómica: " + error.message);
         return;
       }
 
-      // 2. Si no tiene ninguna, antes de apartar la nueva, ejecuta release_operator_coils para asegurar contador en cero
-      try {
-        await supabase.rpc('release_operator_coils', { p_operator_id: operatorIdentifier });
-        if (activeOpId !== operatorIdentifier) {
-          await supabase.rpc('release_operator_coils', { p_operator_id: activeOpId });
-        }
-      } catch (relErr) {
-        console.warn('Aviso ejecutando release_operator_coils preventivo:', relErr);
-      }
-
-      // 3. Apartar la siguiente bobina estrictamente disponible (.is('reserved_by', null).eq('is_verified', false))
-      let coil = null;
-
-      // Intentar RPC claim_next_coil si existe
-      try {
-        const { data: rpcData, error: rpcErr } = await supabase.rpc('claim_next_coil', {
-          p_sheet_name: selectedDiam,
-          p_operator_id: operatorIdentifier,
-        });
-
-        if (!rpcErr && rpcData) {
-          if (Array.isArray(rpcData) && rpcData.length > 0) {
-            coil = rpcData[0];
-          } else if (rpcData && typeof rpcData === 'object' && rpcData.id) {
-            coil = rpcData;
-          }
-        }
-      } catch (rpcEx) {}
-
-      // Fallback directo atómico con verificación de exclusividad
-      if (!coil) {
-        const { data: availableData, error: availErr } = await supabase
-          .from('registros_importacion')
-          .select('*')
-          .eq('sheet_name', selectedDiam)
-          .eq('is_verified', false)
-          .is('reserved_by', null)
-          .order('lote', { ascending: true })
-          .limit(1);
-
-        if (!availErr && availableData && availableData.length > 0) {
-          const candidate = availableData[0];
-
-          // Reservar condicionalmente verificando que siga libre en ese milisegundo
-          const { data: updatedCoil, error: updateErr } = await supabase
-            .from('registros_importacion')
-            .update({
-              reserved_by: operatorIdentifier,
-              reserved_at: new Date().toISOString(),
-            })
-            .eq('id', candidate.id)
-            .eq('is_verified', false)
-            .is('reserved_by', null)
-            .select();
-
-          if (!updateErr && updatedCoil && updatedCoil.length > 0) {
-            coil = updatedCoil[0];
-          } else {
-            // Reintento atómico en caso de colisión instantánea con otro dispositivo
-            const { data: retryData } = await supabase
-              .from('registros_importacion')
-              .select('*')
-              .eq('sheet_name', selectedDiam)
-              .eq('is_verified', false)
-              .is('reserved_by', null)
-              .order('lote', { ascending: true })
-              .limit(1);
-
-            if (retryData && retryData.length > 0) {
-              const { data: retryUpdated } = await supabase
-                .from('registros_importacion')
-                .update({
-                  reserved_by: operatorIdentifier,
-                  reserved_at: new Date().toISOString(),
-                })
-                .eq('id', retryData[0].id)
-                .eq('is_verified', false)
-                .is('reserved_by', null)
-                .select();
-
-              if (retryUpdated && retryUpdated.length > 0) {
-                coil = retryUpdated[0];
-              }
-            }
-          }
-        }
-      }
-
-      // Filtro estricto de seguridad: NUNCA mostrar bobinas ya verificadas
-      if (coil && coil.is_verified === true) {
-        coil = null;
-      }
-
+      const coil = data && data.length > 0 ? data[0] : (data && typeof data === 'object' && data.id ? data : null);
       setCurrentCoil(coil);
       await fetchUpcomingRolls(coil?.id);
     } catch (err) {
-      console.error('Error claiming coil:', err.message);
+      console.error('Error claiming coil atomic:', err.message);
       setError('No se pudo reclamar la bobina en el servidor.');
     } finally {
       isClaimingRef.current = false;

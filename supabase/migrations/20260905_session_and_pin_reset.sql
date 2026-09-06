@@ -40,3 +40,67 @@ $$;
 ALTER TABLE IF EXISTS registros_importacion
 ADD COLUMN IF NOT EXISTS verification_mode TEXT;
 
+-- 4. Columna para huella persistente de dispositivo en usuarios_app
+ALTER TABLE IF EXISTS usuarios_app 
+ADD COLUMN IF NOT EXISTS current_device_id TEXT;
+
+-- 5. RPC Atómica para reclamar exactamente 1 bobina por operario con FOR UPDATE SKIP LOCKED
+CREATE OR REPLACE FUNCTION claim_next_coil_atomic(
+    p_operator_id TEXT,
+    p_sheet_name TEXT
+)
+RETURNS SETOF registros_importacion
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_coil_id BIGINT;
+BEGIN
+    -- 1. Si el operario ya tiene una bobina asignada no verificada en este calibre, devolver esa misma
+    SELECT id INTO v_coil_id
+    FROM registros_importacion
+    WHERE sheet_name = p_sheet_name
+      AND is_verified = FALSE
+      AND (reserved_by = p_operator_id OR reserved_by = p_operator_id::text)
+    ORDER BY reserved_at DESC
+    LIMIT 1;
+
+    IF v_coil_id IS NOT NULL THEN
+        RETURN QUERY
+        SELECT * FROM registros_importacion
+        WHERE id = v_coil_id;
+        RETURN;
+    END IF;
+
+    -- 2. Asegurar que reservas previas en otras hojas o sesiones queden limpias
+    IF EXISTS (
+        SELECT 1 FROM pg_proc WHERE proname = 'release_operator_coils'
+    ) THEN
+        PERFORM release_operator_coils(p_operator_id);
+    END IF;
+
+    -- 3. Bloquear atómicamente la primera bobina disponible sin colisiones
+    SELECT id INTO v_coil_id
+    FROM registros_importacion
+    WHERE sheet_name = p_sheet_name
+      AND is_verified = FALSE
+      AND reserved_by IS NULL
+    ORDER BY lote ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED;
+
+    -- 4. Apartar la bobina encontrada
+    IF v_coil_id IS NOT NULL THEN
+        UPDATE registros_importacion
+        SET reserved_by = p_operator_id,
+            reserved_at = NOW()
+        WHERE id = v_coil_id;
+
+        RETURN QUERY
+        SELECT * FROM registros_importacion
+        WHERE id = v_coil_id;
+    END IF;
+END;
+$$;
+
+

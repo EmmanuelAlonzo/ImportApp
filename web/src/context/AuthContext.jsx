@@ -3,6 +3,15 @@ import { supabase } from '../services/supabase';
 
 const AuthContext = createContext({});
 
+export const getDeviceId = () => {
+    let id = localStorage.getItem('@terminal_device_id');
+    if (!id) {
+        id = 'DEV-' + ((typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(36).substring(2, 9)));
+        localStorage.setItem('@terminal_device_id', id);
+    }
+    return id;
+};
+
 export const getOperatorId = (currentUser) => {
     let id = null;
     if (currentUser) {
@@ -40,6 +49,8 @@ export const AuthProvider = ({ children }) => {
     const [isAppActive, setIsAppActive] = useState(true);
 
     useEffect(() => {
+        // Asegurar que el ID de terminal esté inicializado en localStorage
+        getDeviceId();
         loadSession();
         checkAppStatus();
     }, []);
@@ -96,8 +107,19 @@ export const AuthProvider = ({ children }) => {
                 throw new Error('Usuario suspendido. Consulte con el Administrador');
             }
 
-            // 1. Control de Sesión Única:
-            // Si data.session_token no es nulo/vacío y difiere del token local actual en este navegador/pestaña
+            // 1. Control de Huella Persistente de Dispositivo Web (current_device_id):
+            // Si user.current_device_id no es null y es distinto al getDeviceId() local, bloquea el inicio
+            const localDeviceId = getDeviceId();
+            if (data.current_device_id && data.current_device_id.trim() !== '' && data.current_device_id !== localDeviceId) {
+                return {
+                    success: false,
+                    sessionConflict: true,
+                    user: data,
+                    error: 'Este usuario ya tiene una sesión iniciada en otro dispositivo'
+                };
+            }
+
+            // Control secundario por session_token
             const localToken = sessionStorage.getItem('session_token');
             if (data.session_token && data.session_token.trim() !== '' && data.session_token !== localToken) {
                 return {
@@ -117,7 +139,7 @@ export const AuthProvider = ({ children }) => {
                 };
             }
 
-            // 3. Generar nuevo session_token
+            // 3. Generar nuevo session_token y registrar current_device_id
             const newToken = (typeof crypto !== 'undefined' && crypto.randomUUID)
                 ? crypto.randomUUID()
                 : 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
@@ -125,13 +147,20 @@ export const AuthProvider = ({ children }) => {
             try {
                 await supabase
                     .from('usuarios_app')
-                    .update({ session_token: newToken })
+                    .update({
+                        session_token: newToken,
+                        current_device_id: localDeviceId
+                    })
                     .eq('id', data.id);
             } catch (tokenErr) {
-                console.warn('Advertencia al registrar session_token en Supabase:', tokenErr);
+                console.warn('Advertencia al registrar session_token / current_device_id en Supabase:', tokenErr);
+                try {
+                    await supabase.from('usuarios_app').update({ session_token: newToken }).eq('id', data.id);
+                } catch (e) {}
             }
 
             data.session_token = newToken;
+            data.current_device_id = localDeviceId;
             sessionStorage.setItem('session_token', newToken);
             sessionStorage.setItem('@user_session', JSON.stringify(data));
             sessionStorage.setItem('usuario_activo', JSON.stringify(data));
@@ -144,6 +173,7 @@ export const AuthProvider = ({ children }) => {
 
     const forceSessionOverride = async (userId) => {
         try {
+            const localDeviceId = getDeviceId();
             const newToken = (typeof crypto !== 'undefined' && crypto.randomUUID)
                 ? crypto.randomUUID()
                 : 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
@@ -157,28 +187,29 @@ export const AuthProvider = ({ children }) => {
                 });
                 if (!rpcError) {
                     rpcSuccess = true;
-                } else {
-                    console.warn('RPC force_session_override no disponible o con error, aplicando fallback:', rpcError);
                 }
-            } catch (rpcEx) {
-                console.warn('Excepción al invocar RPC force_session_override:', rpcEx);
+            } catch (rpcEx) {}
+
+            // Actualizar current_device_id y session_token al ID local y liberar reservas previas
+            try {
+                await supabase
+                    .from('usuarios_app')
+                    .update({
+                        session_token: newToken,
+                        current_device_id: localDeviceId
+                    })
+                    .eq('id', userId);
+            } catch (updateErr) {
+                console.warn('Fallback update session_token/current_device_id:', updateErr);
+                try {
+                    await supabase.from('usuarios_app').update({ session_token: newToken }).eq('id', userId);
+                } catch (e) {}
             }
 
-            // Fallback directo si la RPC no existe o falla
-            if (!rpcSuccess) {
-                try {
-                    await supabase
-                        .from('usuarios_app')
-                        .update({ session_token: newToken })
-                        .eq('id', userId);
-                } catch (updateErr) {
-                    console.warn('Fallback update session_token falló:', updateErr);
-                }
-                try {
-                    await supabase.rpc('release_operator_coils', { p_operator_id: String(userId) });
-                } catch (releaseErr) {
-                    console.warn('Fallback release_operator_coils falló:', releaseErr);
-                }
+            try {
+                await supabase.rpc('release_operator_coils', { p_operator_id: String(userId) });
+            } catch (releaseErr) {
+                console.warn('Fallback release_operator_coils falló:', releaseErr);
             }
 
             // 2. Obtener datos actualizados del usuario
@@ -194,6 +225,7 @@ export const AuthProvider = ({ children }) => {
 
             sessionStorage.setItem('session_token', newToken);
             updatedUser.session_token = newToken;
+            updatedUser.current_device_id = localDeviceId;
 
             // 3. Verificar si requiere cambio de PIN
             if (updatedUser.requires_pin_reset === true || updatedUser.pin === '0000') {
@@ -215,23 +247,30 @@ export const AuthProvider = ({ children }) => {
 
     const completeLoginAfterPinReset = async (userData) => {
         try {
+            const localDeviceId = getDeviceId();
             let token = sessionStorage.getItem('session_token');
             if (!token) {
                 token = (typeof crypto !== 'undefined' && crypto.randomUUID)
                     ? crypto.randomUUID()
                     : 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
                 sessionStorage.setItem('session_token', token);
-                try {
-                    await supabase
-                        .from('usuarios_app')
-                        .update({ session_token: token })
-                        .eq('id', userData.id);
-                } catch (e) {
-                    console.warn('Error actualizando session_token tras cambio de PIN:', e);
-                }
+            }
+
+            try {
+                await supabase
+                    .from('usuarios_app')
+                    .update({
+                        session_token: token,
+                        current_device_id: localDeviceId,
+                        requires_pin_reset: false
+                    })
+                    .eq('id', userData.id);
+            } catch (e) {
+                console.warn('Error actualizando session_token tras cambio de PIN:', e);
             }
 
             userData.session_token = token;
+            userData.current_device_id = localDeviceId;
             userData.requires_pin_reset = false;
             sessionStorage.setItem('@user_session', JSON.stringify(userData));
             sessionStorage.setItem('usuario_activo', JSON.stringify(userData));
@@ -245,15 +284,21 @@ export const AuthProvider = ({ children }) => {
     const logout = async () => {
         const currentUserId = user?.id;
 
-        // 1. En Supabase: poner session_token = NULL y ejecutar release_operator_coils
+        // 1. En Supabase: poner current_device_id = NULL y session_token = NULL y ejecutar release_operator_coils
         if (currentUserId) {
             try {
                 await supabase
                     .from('usuarios_app')
-                    .update({ session_token: null })
+                    .update({
+                        session_token: null,
+                        current_device_id: null
+                    })
                     .eq('id', currentUserId);
             } catch (tokenErr) {
-                console.warn("Error al anular session_token en logout:", tokenErr);
+                console.warn("Error al anular session_token / current_device_id en logout:", tokenErr);
+                try {
+                    await supabase.from('usuarios_app').update({ session_token: null }).eq('id', currentUserId);
+                } catch (e) {}
             }
 
             try {
@@ -317,6 +362,7 @@ export const AuthProvider = ({ children }) => {
             isAuthenticated: !!user,
             operatorId,
             getOperatorId,
+            getDeviceId,
             loading,
             isAppActive,
             login,
@@ -331,5 +377,6 @@ export const AuthProvider = ({ children }) => {
 };
 
 export const useAuth = () => useContext(AuthContext);
+
 
 

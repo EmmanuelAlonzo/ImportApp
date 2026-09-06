@@ -94,7 +94,7 @@ export default function LoginView() {
     const result = await login(userId, pinValue);
 
     if (result.sessionConflict) {
-      setError('Este usuario ya tiene una sesión abierta en otro dispositivo.');
+      setError(result.error || 'Este usuario ya tiene una sesión iniciada en otro dispositivo.');
       setSessionConflictUser(result.user || matchedUser);
       setPin('');
     } else if (result.requiresPinReset) {
