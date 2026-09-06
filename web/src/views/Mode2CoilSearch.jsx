@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
 import { sheetSyncService } from '../services/sheetSyncService';
@@ -11,30 +11,55 @@ import {
   X,
   Flame,
   Scale,
-  Sparkles
+  Sparkles,
+  Layers,
+  HelpCircle,
+  ArrowRight
 } from 'lucide-react';
 
 export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
   const { user, operatorId: authOperatorId } = useAuth();
   const operatorId = authOperatorId || user?.id || user?.nombre || (typeof localStorage !== 'undefined' ? localStorage.getItem('device_session_id') : null) || 'operador';
 
-  // Búsqueda bajo demanda (On-Demand)
+  // Entradas de búsqueda (Typeahead on-demand)
   const [searchColada, setSearchColada] = useState('');
   const [searchCoil, setSearchCoil] = useState('');
   const [searching, setSearching] = useState(false);
 
-  // Bobina seleccionada / reservada para confirmación
+  // Sugerencias rápidas (Typeahead liviano)
+  const [coladaSuggestions, setColadaSuggestions] = useState([]);
+  const [showColadaDropdown, setShowColadaDropdown] = useState(false);
+  const [loadingColadaSuggestions, setLoadingColadaSuggestions] = useState(false);
+
+  const [coilSuggestions, setCoilSuggestions] = useState([]);
+  const [showCoilDropdown, setShowCoilDropdown] = useState(false);
+  const [loadingCoilSuggestions, setLoadingCoilSuggestions] = useState(false);
+
+  // Desambiguación para Coil en múltiples coladas
+  const [disambiguationOptions, setDisambiguationOptions] = useState([]);
+
+  // Bobina seleccionada y reservada
   const [selectedRoll, setSelectedRoll] = useState(null);
   const [confirming, setConfirming] = useState(false);
 
-  // Mensajes de retroalimentación
+  // Mensajes informativos
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Referencia a la reserva activa del operador en este modo
+  // Referencias para control de foco, clics externos y timers debounce
+  const coilInputRef = useRef(null);
+  const containerRef = useRef(null);
+  const coladaDebounceRef = useRef(null);
+  const coilDebounceRef = useRef(null);
   const activeReservationIdRef = useRef(null);
 
-  // Liberar la reserva en Supabase para una bobina específica
+  // Cerrar todos los dropdowns flotantes
+  const closeAllDropdowns = useCallback(() => {
+    setShowColadaDropdown(false);
+    setShowCoilDropdown(false);
+  }, []);
+
+  // Liberar reserva activa en Supabase
   const releaseReservation = async (rollId) => {
     if (!rollId) return;
     try {
@@ -48,7 +73,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
     }
   };
 
-  // Al desmontar el componente (salir del modo), limpiar cualquier reserva activa
+  // Limpieza al desmontar el componente
   useEffect(() => {
     return () => {
       if (activeReservationIdRef.current) {
@@ -56,10 +81,27 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         activeReservationIdRef.current = null;
         releaseReservation(idToFree);
       }
+      if (coladaDebounceRef.current) clearTimeout(coladaDebounceRef.current);
+      if (coilDebounceRef.current) clearTimeout(coilDebounceRef.current);
     };
   }, []);
 
-  // Limpiar selección y estados al cambiar de calibre/diámetro
+  // Cierre de dropdowns al hacer clic/tap fuera del contenedor
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        closeAllDropdowns();
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+    };
+  }, [closeAllDropdowns]);
+
+  // Limpieza de estado al cambiar de calibre/diámetro
   useEffect(() => {
     if (activeReservationIdRef.current) {
       const idToFree = activeReservationIdRef.current;
@@ -67,15 +109,205 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
       releaseReservation(idToFree);
     }
     setSelectedRoll(null);
+    setDisambiguationOptions([]);
+    closeAllDropdowns();
     setError('');
     setSuccessMsg('');
     setSearchColada('');
     setSearchCoil('');
-  }, [selectedDiam]);
+  }, [selectedDiam, closeAllDropdowns]);
 
-  // Búsqueda directa e indexada on-demand (limitada a 1 resultado)
+  // -------------------------------------------------------------
+  // 1. TYPEAHEAD COLADA (Debounce 200 ms)
+  // -------------------------------------------------------------
+  const handleColadaChange = (e) => {
+    const val = e.target.value;
+    setSearchColada(val);
+    setError('');
+    setSuccessMsg('');
+    setDisambiguationOptions([]);
+
+    if (coladaDebounceRef.current) clearTimeout(coladaDebounceRef.current);
+
+    if (val.trim().length < 2) {
+      setColadaSuggestions([]);
+      setShowColadaDropdown(false);
+      return;
+    }
+
+    coladaDebounceRef.current = setTimeout(async () => {
+      if (!selectedDiam) return;
+      setLoadingColadaSuggestions(true);
+      try {
+        const { data, error: qErr } = await supabase
+          .from('registros_importacion')
+          .select('colada')
+          .eq('sheet_name', selectedDiam)
+          .eq('is_verified', false)
+          .is('reserved_by', null)
+          .ilike('colada', `${val.trim()}%`)
+          .limit(8);
+
+        if (!qErr && data) {
+          const unique = [...new Set(data.map((r) => r.colada).filter(Boolean))];
+          setColadaSuggestions(unique);
+          setShowColadaDropdown(unique.length > 0);
+        }
+      } catch (err) {
+        console.warn('Error fetching colada suggestions:', err);
+      } finally {
+        setLoadingColadaSuggestions(false);
+      }
+    }, 200);
+  };
+
+  // Al seleccionar una sugerencia de Colada
+  const handleSelectColadaSuggestion = (coladaVal) => {
+    setSearchColada(coladaVal);
+    setShowColadaDropdown(false);
+    // Si el campo coil estaba vacío, enfocar el input de coil
+    if (!searchCoil.trim()) {
+      setTimeout(() => {
+        coilInputRef.current?.focus();
+      }, 50);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // 2. TYPEAHEAD COIL / BOBINA (Debounce 200 ms)
+  // -------------------------------------------------------------
+  const handleCoilChange = (e) => {
+    const val = e.target.value;
+    setSearchCoil(val);
+    setError('');
+    setSuccessMsg('');
+    setDisambiguationOptions([]);
+
+    if (coilDebounceRef.current) clearTimeout(coilDebounceRef.current);
+
+    if (val.trim().length < 1) {
+      setCoilSuggestions([]);
+      setShowCoilDropdown(false);
+      return;
+    }
+
+    coilDebounceRef.current = setTimeout(async () => {
+      if (!selectedDiam) return;
+      setLoadingCoilSuggestions(true);
+      try {
+        let query = supabase
+          .from('registros_importacion')
+          .select('id, coil, colada, lote, peso, sae, sku')
+          .eq('sheet_name', selectedDiam)
+          .eq('is_verified', false)
+          .is('reserved_by', null)
+          .ilike('coil', `${val.trim()}%`);
+
+        if (searchColada.trim()) {
+          query = query.eq('colada', searchColada.trim());
+        }
+
+        const { data, error: qErr } = await query.limit(10);
+
+        if (!qErr && data && data.length > 0) {
+          // Autollenado inteligente: Si las coincidencias arrojan solo 1 colada posible
+          const uniqueColadas = [...new Set(data.map((r) => r.colada).filter(Boolean))];
+          if (!searchColada.trim() && uniqueColadas.length === 1) {
+            setSearchColada(uniqueColadas[0]);
+          }
+
+          setCoilSuggestions(data);
+          setShowCoilDropdown(true);
+        } else {
+          setCoilSuggestions([]);
+          setShowCoilDropdown(false);
+        }
+      } catch (err) {
+        console.warn('Error fetching coil suggestions:', err);
+      } finally {
+        setLoadingCoilSuggestions(false);
+      }
+    }, 200);
+  };
+
+  // Al seleccionar una sugerencia de Coil
+  const handleSelectCoilSuggestion = (item) => {
+    closeAllDropdowns();
+    setSearchCoil(item.coil || '');
+    if (item.colada) {
+      setSearchColada(item.colada);
+    }
+    // Procede directamente a reservar ese ID específico
+    claimSpecificCoil(item);
+  };
+
+  // -------------------------------------------------------------
+  // 3. RESERVA ATÓMICA DE BOBINA ESPECÍFICA POR ID
+  // -------------------------------------------------------------
+  const claimSpecificCoil = async (candidate) => {
+    if (!candidate?.id) return;
+
+    // Si ya teníamos otra bobina reservada en este modo, liberarla primero
+    if (activeReservationIdRef.current && activeReservationIdRef.current !== candidate.id) {
+      const idToFree = activeReservationIdRef.current;
+      activeReservationIdRef.current = null;
+      await releaseReservation(idToFree);
+    }
+
+    setSearching(true);
+    setError('');
+    setSuccessMsg('');
+    setDisambiguationOptions([]);
+    closeAllDropdowns();
+
+    try {
+      const operatorIdentifier = user?.id ? String(user.id) : String(operatorId);
+      const nowIso = new Date().toISOString();
+
+      const { data: updateData, error: updateError } = await supabase
+        .from('registros_importacion')
+        .update({
+          reserved_by: operatorIdentifier,
+          reserved_at: nowIso
+        })
+        .eq('id', candidate.id)
+        .eq('is_verified', false)
+        .is('reserved_by', null)
+        .select();
+
+      if (updateError || !updateData || updateData.length === 0) {
+        setError('Bobina no encontrada o ya verificada por otro operario');
+        setSelectedRoll(null);
+        activeReservationIdRef.current = null;
+        return;
+      }
+
+      const claimedRoll = updateData[0];
+      activeReservationIdRef.current = claimedRoll.id;
+      setSelectedRoll(claimedRoll);
+      setSearchColada(claimedRoll.colada || '');
+      setSearchCoil(claimedRoll.coil || '');
+      setError('');
+
+      if (navigator.vibrate) {
+        try {
+          navigator.vibrate(50);
+        } catch (vibErr) {}
+      }
+    } catch (err) {
+      console.error('Error al reservar bobina atómica:', err);
+      setError('Error inesperado al reservar la bobina.');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // 4. BÚSQUEDA Y MANEJO DE DESAMBIGUACIÓN (Al dar clic en BUSCAR o Enter)
+  // -------------------------------------------------------------
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
+    closeAllDropdowns();
 
     const coladaTrimmed = searchColada.trim();
     const coilTrimmed = searchCoil.trim();
@@ -101,9 +333,9 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
     setError('');
     setSuccessMsg('');
     setSelectedRoll(null);
+    setDisambiguationOptions([]);
 
     try {
-      // 1. Consulta directa, indexada y limitada estrictamente a 1 resultado libre
       let query = supabase
         .from('registros_importacion')
         .select('*')
@@ -120,64 +352,38 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
 
       const { data, error: searchError } = await query
         .order('lote', { ascending: true })
-        .limit(1);
+        .limit(20);
 
       if (searchError) {
-        console.error('Error en búsqueda on-demand de bobina:', searchError);
+        console.error('Error al buscar bobinas:', searchError);
         setError('Error al consultar el servidor: ' + searchError.message);
         return;
       }
 
-      // Si no existe o ya fue verificada / reservada por otro usuario:
       if (!data || data.length === 0) {
         setError('Bobina no encontrada o ya verificada por otro operario');
         setSelectedRoll(null);
         return;
       }
 
-      const candidate = data[0];
-      const operatorIdentifier = user?.id ? String(user.id) : String(operatorId);
-
-      // 2. Asignación atómica al operario actual (evita condiciones de carrera entre terminales)
-      const nowIso = new Date().toISOString();
-      const { data: updateData, error: updateError } = await supabase
-        .from('registros_importacion')
-        .update({
-          reserved_by: operatorIdentifier,
-          reserved_at: nowIso
-        })
-        .eq('id', candidate.id)
-        .eq('is_verified', false)
-        .is('reserved_by', null)
-        .select();
-
-      if (updateError || !updateData || updateData.length === 0) {
-        setError('Bobina no encontrada o ya verificada por otro operario');
-        setSelectedRoll(null);
-        activeReservationIdRef.current = null;
+      // Caso 1: Match único -> Apartar de inmediato
+      if (data.length === 1) {
+        await claimSpecificCoil(data[0]);
         return;
       }
 
-      const claimedRoll = updateData[0];
-      activeReservationIdRef.current = claimedRoll.id;
-      setSelectedRoll(claimedRoll);
-      setError('');
-
-      // Retroalimentación háptica en escaneo exitoso
-      if (navigator.vibrate) {
-        try {
-          navigator.vibrate(50);
-        } catch (vibErr) {}
-      }
+      // Caso 2: Múltiples opciones encontradas (mismo Coil en distintas coladas u homónimos)
+      // Activar modal / tarjeta de desambiguación para selección manual precisa
+      setDisambiguationOptions(data);
     } catch (err) {
-      console.error('Excepción al buscar bobina on-demand:', err);
-      setError('Error inesperado al buscar la bobina.');
+      console.error('Excepción en handleSearch:', err);
+      setError('Error al procesar la búsqueda.');
     } finally {
       setSearching(false);
     }
   };
 
-  // Cancelar selección activa y liberar la reserva
+  // Cancelar selección y liberar reserva
   const handleCancelSelection = async () => {
     if (activeReservationIdRef.current) {
       const idToFree = activeReservationIdRef.current;
@@ -188,7 +394,9 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
     setError('');
   };
 
-  // Confirmar y verificar la bobina reclamada
+  // -------------------------------------------------------------
+  // 5. CONFIRMAR Y VERIFICAR LA BOBINA
+  // -------------------------------------------------------------
   const handleVerify = async () => {
     if (!selectedRoll) return;
 
@@ -200,7 +408,6 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
     const verifyTimestamp = new Date().toISOString();
     const operatorName = user?.nombre || 'Operador';
 
-    // Feedback táctil
     if (navigator.vibrate) {
       try {
         navigator.vibrate(100);
@@ -208,7 +415,6 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
     }
 
     try {
-      // 1. UPDATE en Supabase marcando is_verified = true y liberando la reserva
       const updatePayload = {
         is_verified: true,
         verified_at: verifyTimestamp,
@@ -224,7 +430,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         .update(updatePayload)
         .eq('id', targetId);
 
-      // Fallback si la columna verification_mode aún no existe en la base de datos
+      // Fallback si la columna verification_mode aún no existe en base de datos
       if (updateError && (updateError.code === 'PGRST204' || updateError.message?.includes('verification_mode'))) {
         delete updatePayload.verification_mode;
         const { error: fallbackErr } = await supabase
@@ -240,7 +446,6 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         return;
       }
 
-      // 2. Crear el registro verificado
       const verifiedRecord = {
         ...selectedRoll,
         is_verified: true,
@@ -251,15 +456,12 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         spreadsheet_id: selectedRoll.spreadsheet_id,
       };
 
-      // 3. Agregar a la cola de sincronización
       sheetSyncService.addToQueue(verifiedRecord);
 
-      // 4. Notificar al Dashboard principal
       if (onVerifySuccess) {
         onVerifySuccess(verifiedRecord);
       }
 
-      // 5. Limpieza de estado local
       activeReservationIdRef.current = null;
       setSelectedRoll(null);
       setSearchColada('');
@@ -274,9 +476,17 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Formulario de Búsqueda Indexada On-Demand */}
-      <form onSubmit={handleSearch} className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-4">
+    <div ref={containerRef} className="space-y-6">
+      {/* Formulario de Búsqueda y Typeahead */}
+      <form
+        onSubmit={handleSearch}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            closeAllDropdowns();
+          }
+        }}
+        className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-4 relative"
+      >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
           <div className="flex items-center space-x-2">
             <Barcode className="w-5 h-5 text-sky-400" />
@@ -290,8 +500,8 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Input Código de Colada / Heat */}
-          <div className="space-y-1.5">
+          {/* Input Código de Colada / Heat con Typeahead */}
+          <div className="space-y-1.5 relative">
             <label className="block text-[10px] font-black text-slate-400 tracking-wider uppercase">
               Código de Colada / Heat
             </label>
@@ -299,51 +509,128 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
               <input
                 type="text"
                 value={searchColada}
-                onChange={(e) => setSearchColada(e.target.value)}
-                placeholder="Ej. COL-8924 / 45012..."
+                onChange={handleColadaChange}
+                onFocus={() => {
+                  if (coladaSuggestions.length > 0) setShowColadaDropdown(true);
+                }}
+                placeholder="Escriba colada (mín. 2 car.)..."
                 className="w-full bg-slate-950 text-white rounded-xl border border-slate-700 p-3.5 pl-11 font-bold text-sm focus:border-sky-400 focus:outline-none transition"
                 disabled={searching || confirming}
                 autoComplete="off"
               />
               <Flame className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              {loadingColadaSuggestions && (
+                <Loader2 className="absolute right-9 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-sky-400" />
+              )}
               {searchColada && (
                 <button
                   type="button"
-                  onClick={() => setSearchColada('')}
+                  onClick={() => {
+                    setSearchColada('');
+                    setColadaSuggestions([]);
+                    setShowColadaDropdown(false);
+                  }}
                   className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 p-1 cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               )}
             </div>
+
+            {/* Dropdown flotante de sugerencias de Colada */}
+            {showColadaDropdown && coladaSuggestions.length > 0 && (
+              <div className="absolute z-50 w-full mt-1 bg-slate-950 border border-slate-700 rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-slate-800">
+                <div className="p-2 bg-slate-900/90 text-[10px] font-black text-slate-400 uppercase tracking-wider flex justify-between items-center">
+                  <span>Coladas sugeridas</span>
+                  <span className="text-sky-400">{coladaSuggestions.length} disponibles</span>
+                </div>
+                {coladaSuggestions.map((colada) => (
+                  <button
+                    key={colada}
+                    type="button"
+                    onClick={() => handleSelectColadaSuggestion(colada)}
+                    className="w-full text-left p-3 hover:bg-slate-900 active:bg-slate-800 font-bold text-sm text-sky-400 transition flex items-center justify-between cursor-pointer"
+                  >
+                    <span>Colada: {colada}</span>
+                    <span className="text-[10px] text-slate-500 font-normal">Tocar para autollenar →</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Input Número de Bobina / Coil */}
-          <div className="space-y-1.5">
+          {/* Input Número de Bobina / Coil con Typeahead Inteligente */}
+          <div className="space-y-1.5 relative">
             <label className="block text-[10px] font-black text-slate-400 tracking-wider uppercase">
               Número de Bobina / Coil
             </label>
             <div className="relative">
               <input
+                ref={coilInputRef}
                 type="text"
                 value={searchCoil}
-                onChange={(e) => setSearchCoil(e.target.value)}
-                placeholder="Ej. C-10492 / B-42..."
+                onChange={handleCoilChange}
+                onFocus={() => {
+                  if (coilSuggestions.length > 0) setShowCoilDropdown(true);
+                }}
+                placeholder="Escriba o escanee Coil..."
                 className="w-full bg-slate-950 text-white rounded-xl border border-slate-700 p-3.5 pl-11 font-bold text-sm focus:border-sky-400 focus:outline-none transition"
                 disabled={searching || confirming}
                 autoComplete="off"
               />
               <Barcode className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              {loadingCoilSuggestions && (
+                <Loader2 className="absolute right-9 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-sky-400" />
+              )}
               {searchCoil && (
                 <button
                   type="button"
-                  onClick={() => setSearchCoil('')}
+                  onClick={() => {
+                    setSearchCoil('');
+                    setCoilSuggestions([]);
+                    setShowCoilDropdown(false);
+                  }}
                   className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 p-1 cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               )}
             </div>
+
+            {/* Dropdown flotante de sugerencias de Coil con Desambiguación */}
+            {showCoilDropdown && coilSuggestions.length > 0 && (
+              <div className="absolute z-50 w-full mt-1 bg-slate-950 border border-slate-700 rounded-xl shadow-2xl max-h-64 overflow-y-auto divide-y divide-slate-800">
+                <div className="p-2 bg-slate-900/90 text-[10px] font-black text-slate-400 uppercase tracking-wider flex justify-between items-center">
+                  <span>Bobinas disponibles</span>
+                  <span className="text-sky-400">{coilSuggestions.length} coincidencias</span>
+                </div>
+                {coilSuggestions.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleSelectCoilSuggestion(item)}
+                    className="w-full text-left p-3 hover:bg-slate-900 active:bg-slate-800 transition flex items-center justify-between cursor-pointer group"
+                  >
+                    <div>
+                      <div className="font-bold text-sm text-white group-hover:text-sky-400 transition">
+                        Coil #{item.coil || 'S/N'}
+                      </div>
+                      <div className="text-[11px] text-slate-400 space-x-2">
+                        <span>Colada: <strong className="text-sky-300">{item.colada || '---'}</strong></span>
+                        <span>•</span>
+                        <span>Lote: {item.lote}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs font-black text-emerald-400 block">
+                        {item.peso ? `${parseFloat(item.peso).toLocaleString()} KG` : ''}
+                      </span>
+                      <span className="text-[9px] font-bold text-sky-400">APARTAR →</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -367,7 +654,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         </button>
       </form>
 
-      {/* Alerta Visual de Error / No encontrada */}
+      {/* Alerta Visual de Error */}
       {error && (
         <div className="bg-red-950/70 border border-red-500/60 text-red-200 text-xs sm:text-sm px-4 py-3.5 rounded-xl text-center font-bold tracking-wide flex items-center justify-center space-x-2 animate-pulse shadow-lg">
           <AlertTriangle className="w-4 h-4 sm:w-5 sm:h-5 text-red-400 shrink-0" />
@@ -383,10 +670,71 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         </div>
       )}
 
+      {/* TARJETA EMERGENTE DE DESAMBIGUACIÓN (Cuando el Coil ingresado existe en múltiples coladas) */}
+      {disambiguationOptions.length > 1 && (
+        <div className="bg-amber-950/40 border-2 border-amber-500/60 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+          <div className="flex items-start justify-between gap-3 border-b border-amber-500/30 pb-3">
+            <div className="flex items-center space-x-3">
+              <Layers className="w-6 h-6 text-amber-400 shrink-0" />
+              <div>
+                <h4 className="text-sm font-black text-amber-300 uppercase tracking-wide">
+                  Desambiguación Requerida
+                </h4>
+                <p className="text-xs text-amber-200/90 font-medium">
+                  El Coil ingresado existe en múltiples coladas. Selecciona la correcta:
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDisambiguationOptions([])}
+              className="p-1 text-amber-400 hover:text-white rounded-lg cursor-pointer"
+              title="Cerrar opciones"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
+            {disambiguationOptions.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => claimSpecificCoil(opt)}
+                className="p-4 bg-slate-900/90 hover:bg-slate-850 active:bg-slate-800 border border-amber-500/40 hover:border-amber-400 rounded-2xl text-left transition flex flex-col justify-between space-y-2 cursor-pointer group shadow-md"
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-amber-400 tracking-wider block">
+                      Coil #{opt.coil || 'S/N'}
+                    </span>
+                    <span className="text-sm font-black text-white">
+                      Lote {opt.lote}
+                    </span>
+                  </div>
+                  <span className="text-xs font-black text-emerald-400">
+                    {opt.peso ? `${parseFloat(opt.peso).toLocaleString()} KG` : '0.00 KG'}
+                  </span>
+                </div>
+
+                <div className="text-[11px] text-slate-300 bg-slate-950/60 p-2 rounded-lg border border-slate-800/80 flex justify-between items-center">
+                  <span>Colada: <strong className="text-sky-300">{opt.colada || '---'}</strong></span>
+                  <span className="text-[10px] text-slate-400">{opt.sae || 'EST.'}</span>
+                </div>
+
+                <div className="w-full py-1.5 px-3 bg-amber-500/20 group-hover:bg-amber-500 group-hover:text-slate-950 text-amber-300 text-[10px] font-black uppercase tracking-wider rounded-lg transition flex items-center justify-center space-x-1">
+                  <span>SELECCIONAR Y APARTAR</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Tarjeta de Confirmación de Peso y Datos (Desplegada al encontrar y asignar bobina) */}
       {selectedRoll ? (
         <div className="bg-slate-800/90 rounded-3xl border-2 border-sky-500/40 shadow-2xl overflow-hidden flex flex-col transition-all">
-          {/* Header de la Bobina Reclamada */}
           <div className="bg-slate-950 p-5 sm:p-6 border-b border-slate-800 flex justify-between items-center">
             <div>
               <span className="text-[10px] font-black tracking-widest text-sky-400 block uppercase">
@@ -410,7 +758,6 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
             </div>
           </div>
 
-          {/* Grid de Detalles Técnicos */}
           <div className="p-5 sm:p-6 grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-850/50">
             <div className="space-y-1 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
               <span className="text-[10px] font-bold text-slate-400 tracking-wider block uppercase">
@@ -459,7 +806,6 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
             )}
           </div>
 
-          {/* Botón de Confirmación Definitiva */}
           <div className="p-5 sm:p-6 bg-slate-950 border-t border-slate-800">
             <button
               type="button"
