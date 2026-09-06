@@ -116,6 +116,24 @@ export default function MainDashboard() {
     };
   }, []);
 
+  // Listener beforeunload para liberar bobinas reservadas si el usuario recarga o cierra la pestaña
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (user?.id) {
+        try {
+          supabase.rpc('release_operator_coils', { p_operator_id: user.id });
+        } catch (e) {
+          console.warn("Error al liberar bobinas en beforeunload:", e);
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [user?.id]);
+
   // Refrescar diámetros automáticamente al navegar a la vista de verificación
   useEffect(() => {
     if (activeView === 'verification') {
@@ -235,16 +253,22 @@ export default function MainDashboard() {
   };
 
   // Callback ejecutado al realizar una verificación exitosa en Modo 1 o 2
-  const handleVerifySuccess = (verifiedRecord) => {
+  const handleVerifySuccess = async (verifiedRecord) => {
     // Agregar al historial local de este turno marcado como "pending" (en cola)
     setHistory((prev) => [
       { ...verifiedRecord, syncStatus: 'pending' },
       ...prev
     ]);
     
-    // Refrescar diámetros activos y métricas globales
-    fetchActiveDiameters(false);
-    fetchMetrics();
+    // Forzar de inmediato el refresco de métricas globales y diámetros sin depender exclusivamente de realtime
+    try {
+      await Promise.allSettled([
+        fetchMetrics(),
+        fetchActiveDiameters(false)
+      ]);
+    } catch (e) {
+      console.warn('Aviso refrescando métricas tras verificación:', e);
+    }
   };
 
   // Alternar entre Modo 1 y Modo 2 con liberación atómica de bobinas
@@ -265,6 +289,15 @@ export default function MainDashboard() {
     setFlushing(true);
     setDashboardError('');
     try {
+      // Liberación obligatoria de bobinas antes de limpiar la sesión
+      if (user?.id) {
+        try {
+          await supabase.rpc('release_operator_coils', { p_operator_id: user.id });
+        } catch (e) {
+          console.warn("Error al liberar bobinas en logout:", e);
+        }
+      }
+
       // 1. Intentar vaciar el buffer pendiente con timeout corto (1.5s) para no demorar la salida
       try {
         await Promise.race([

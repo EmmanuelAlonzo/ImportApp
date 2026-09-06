@@ -75,21 +75,62 @@ export default function Mode1SequentialView({ selectedDiam, onVerifySuccess }) {
       });
 
       if (rpcErr) {
-        console.error('Error al invocar claim_next_coil:', rpcErr.message);
-        setError('Error al reclamar siguiente bobina: ' + rpcErr.message);
-        return;
+        console.warn('Aviso al invocar claim_next_coil RPC, verificando disponibilidad directa:', rpcErr.message);
       }
 
       // Supabase puede devolver un objeto o un arreglo de registros
       let coil = null;
-      if (Array.isArray(data)) {
-        coil = data.length > 0 ? data[0] : null;
-      } else if (data && typeof data === 'object' && data.id) {
-        coil = data;
+      if (!rpcErr && data) {
+        if (Array.isArray(data)) {
+          coil = data.length > 0 ? data[0] : null;
+        } else if (data && typeof data === 'object' && data.id) {
+          coil = data;
+        }
+      }
+
+      // Fallback directo con filtro estricto si la RPC no retornó bobina disponible
+      if (!coil) {
+        let fallbackQuery = supabase
+          .from('registros_importacion')
+          .select('*')
+          .eq('sheet_name', selectedDiam)
+          .eq('is_verified', false);
+
+        if (user?.id) {
+          fallbackQuery = fallbackQuery.or(`reserved_by.is.null,reserved_by.eq.${user.id}`);
+        } else {
+          fallbackQuery = fallbackQuery.is('reserved_by', null);
+        }
+
+        const { data: fallbackData } = await fallbackQuery
+          .order('lote', { ascending: true })
+          .limit(1);
+
+        if (fallbackData && fallbackData.length > 0 && fallbackData[0].is_verified === false) {
+          const candidate = fallbackData[0];
+          // Reservar atómicamente para este operador si no la tenía ya
+          if (!candidate.reserved_by) {
+            await supabase
+              .from('registros_importacion')
+              .update({
+                reserved_by: activeOpId,
+                reserved_at: new Date().toISOString()
+              })
+              .eq('id', candidate.id)
+              .eq('is_verified', false)
+              .is('reserved_by', null);
+          }
+          coil = candidate;
+        }
+      }
+
+      // Filtro estricto final: NUNCA mostrar ni sugerir bobinas que tengan is_verified === true
+      if (coil && coil.is_verified === true) {
+        coil = null;
       }
 
       setCurrentCoil(coil);
-      fetchUpcomingRolls(coil?.id);
+      await fetchUpcomingRolls(coil?.id);
     } catch (err) {
       console.error('Error claiming coil:', err.message);
       setError('No se pudo reclamar la bobina en el servidor.');
@@ -106,7 +147,15 @@ export default function Mode1SequentialView({ selectedDiam, onVerifySuccess }) {
         .from('registros_importacion')
         .select('*')
         .eq('sheet_name', selectedDiam)
-        .eq('is_verified', false)
+        .eq('is_verified', false);
+
+      if (user?.id) {
+        query = query.or(`reserved_by.is.null,reserved_by.eq.${user.id}`);
+      } else {
+        query = query.is('reserved_by', null);
+      }
+
+      query = query
         .order('lote', { ascending: true })
         .limit(10);
 
@@ -116,7 +165,8 @@ export default function Mode1SequentialView({ selectedDiam, onVerifySuccess }) {
 
       const { data } = await query;
       if (data) {
-        setUpcomingRolls(data);
+        // Doble validación de seguridad: excluir absolutamente cualquier bobina verificada
+        setUpcomingRolls(data.filter((r) => r.is_verified === false));
       }
     } catch (e) {
       console.warn('Error refrescando próximas bobinas en cola:', e);
@@ -175,8 +225,9 @@ export default function Mode1SequentialView({ selectedDiam, onVerifySuccess }) {
         onVerifySuccess(verifiedRecord);
       }
 
-      // 3. Inmediatamente después, vuelve a invocar claim_next_coil para pedir la siguiente bobina exclusiva
+      // 3. Forzar INMEDIATAMENTE la búsqueda del siguiente disponible sin depender de realtime
       await claimNextCoil(false);
+      await fetchUpcomingRolls(null);
     } catch (err) {
       console.error('Error en confirmación:', err.message);
       alert('Error al guardar verificación: ' + err.message);

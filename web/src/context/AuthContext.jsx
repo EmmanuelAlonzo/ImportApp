@@ -115,24 +115,29 @@ export const AuthProvider = ({ children }) => {
     };
 
     const logout = async () => {
+        if (user?.id) {
+            try {
+                await supabase.rpc('release_operator_coils', { p_operator_id: user.id });
+            } catch (e) {
+                console.warn("Error al liberar bobinas en logout:", e);
+            }
+        }
+
         try {
-            // Recopilar todos los identificadores potenciales del usuario/sesión
-            // para garantizar la liberación sin importar si se reservó con ID, Nombre o Device UUID
+            // Recopilar otros identificadores secundarios si existen
             const candidates = [
-                user?.id !== undefined && user?.id !== null ? String(user.id).trim() : null,
                 user?.nombre ? String(user.nombre).trim() : null,
                 localStorage.getItem('device_session_id') ? localStorage.getItem('device_session_id').trim() : null,
-            ].filter((id) => id && id !== '' && id !== 'undefined' && id !== 'null');
+            ].filter((id) => id && id !== '' && id !== 'undefined' && id !== 'null' && id !== String(user?.id));
 
             const uniqueIds = [...new Set(candidates)];
 
             if (uniqueIds.length > 0) {
-                // Ejecutar en paralelo con timeout de seguridad de 2s
                 await Promise.all(
                     uniqueIds.map((targetId) =>
                         withTimeout(
                             supabase.rpc('release_operator_coils', { p_operator_id: targetId }),
-                            2000
+                            1500
                         ).catch((err) => {
                             console.warn(`Aviso: RPC release_operator_coils falló para ${targetId}:`, err?.message || err);
                         })

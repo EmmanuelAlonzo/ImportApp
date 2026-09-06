@@ -37,7 +37,6 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         .from('registros_importacion')
         .update({ reserved_by: null, reserved_at: null })
         .eq('id', rollId)
-        .eq('reserved_by', operatorId)
         .eq('is_verified', false);
     } catch (e) {
       console.warn('Aviso: Error liberando reserva de bobina en Supabase:', e);
@@ -99,15 +98,24 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
     if (!selectedDiam) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('registros_importacion')
         .select('*')
         .eq('sheet_name', selectedDiam)
-        .eq('is_verified', false)
-        .order('lote', { ascending: true });
+        .eq('is_verified', false);
+
+      if (user?.id) {
+        query = query.or(`reserved_by.is.null,reserved_by.eq.${user.id}`);
+      } else {
+        query = query.is('reserved_by', null);
+      }
+
+      const { data, error } = await query.order('lote', { ascending: true });
 
       if (error) throw error;
-      setPendingRolls(data || []);
+      // Filtro estricto: nunca mostrar ni sugerir bobinas que tengan is_verified === true
+      const availableOnly = (data || []).filter((r) => r.is_verified === false);
+      setPendingRolls(availableOnly);
     } catch (err) {
       console.error('Error fetching pending rolls for autocomplete:', err.message);
       setError('Error al cargar datos de autocompletado.');
@@ -282,19 +290,27 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
       if (checkError) throw checkError;
 
       if (checkData.is_verified) {
-        // Si ya fue verificado, buscar el siguiente pendiente con la misma colada y diámetro
-        const { data: altData, error: altError } = await supabase
+        // Si ya fue verificado, buscar el siguiente pendiente con la misma colada y diámetro con filtro estricto
+        let altQuery = supabase
           .from('registros_importacion')
           .select('*')
           .eq('sheet_name', selectedDiam)
           .eq('colada', selectedRoll.colada)
-          .eq('is_verified', false)
+          .eq('is_verified', false);
+
+        if (user?.id) {
+          altQuery = altQuery.or(`reserved_by.is.null,reserved_by.eq.${user.id}`);
+        } else {
+          altQuery = altQuery.is('reserved_by', null);
+        }
+
+        const { data: altData, error: altError } = await altQuery
           .order('lote', { ascending: true })
           .limit(1);
 
         if (altError) throw altError;
 
-        if (altData && altData.length > 0) {
+        if (altData && altData.length > 0 && altData[0].is_verified === false) {
           rollToVerify = altData[0];
           setReassignedMsg(`Reasignado automáticamente al lote: ${rollToVerify.lote}`);
         } else {
