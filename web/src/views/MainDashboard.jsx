@@ -4,10 +4,11 @@ import { supabase } from '../services/supabase';
 import { sheetSyncService } from '../services/sheetSyncService';
 import Mode1SequentialView from './Mode1SequentialView';
 import Mode2CoilSearch from './Mode2CoilSearch';
+import Mode3NoLabelView from './Mode3NoLabelView';
 import ExportView from './ExportView';
 import AdminDashboardView from './AdminDashboardView';
 import ErrorBoundary from '../components/ErrorBoundary';
-import { LogOut, RefreshCw, Shield, Layers, Search, CheckCircle, CheckCircle2, Loader2, AlertCircle, AlertTriangle, Send, FileSpreadsheet, Settings, UploadCloud, Clock, ShieldCheck, Database } from 'lucide-react';
+import { LogOut, RefreshCw, Shield, Layers, Search, CheckCircle, CheckCircle2, Loader2, AlertCircle, AlertTriangle, Send, FileSpreadsheet, Settings, UploadCloud, Clock, ShieldCheck, Database, Tag } from 'lucide-react';
 
 export default function MainDashboard() {
   const { user, operatorId, logout, checkPermission } = useAuth();
@@ -585,31 +586,44 @@ export default function MainDashboard() {
         {activeView === 'verification' && (
           <div className="space-y-4 sm:space-y-6 flex-1 flex flex-col justify-start max-w-full">
             {/* Selector de Modos (Tabs) con liberación atómica */}
-            <div className="bg-slate-950 p-1 rounded-2xl border border-slate-850 grid grid-cols-2 gap-1.5 sm:gap-2 shadow-inner">
+            <div className="bg-slate-950 p-1 rounded-2xl border border-slate-850 grid grid-cols-3 gap-1 sm:gap-2 shadow-inner">
               <button
                 type="button"
                 onClick={() => handleModeChange('sequential')}
-                className={`py-2.5 sm:py-3.5 rounded-xl text-xs sm:text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-1.5 sm:space-x-2 cursor-pointer ${
+                className={`py-2 sm:py-3.5 rounded-xl text-[10px] sm:text-xs md:text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-1 sm:space-x-2 cursor-pointer ${
                   mode === 'sequential'
                     ? 'bg-slate-800 text-emerald-400 border border-slate-700 shadow-md'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
                 }`}
               >
-                <Layers className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <Layers className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
                 <span className="truncate">MODO 1: SECUENCIAL</span>
               </button>
               
               <button
                 type="button"
                 onClick={() => handleModeChange('search')}
-                className={`py-2.5 sm:py-3.5 rounded-xl text-xs sm:text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-1.5 sm:space-x-2 cursor-pointer ${
+                className={`py-2 sm:py-3.5 rounded-xl text-[10px] sm:text-xs md:text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-1 sm:space-x-2 cursor-pointer ${
                   mode === 'search'
                     ? 'bg-slate-800 text-sky-400 border border-slate-700 shadow-md'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
                 }`}
               >
-                <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
                 <span className="truncate">MODO 2: COLADA/COIL</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleModeChange('no_label')}
+                className={`py-2 sm:py-3.5 rounded-xl text-[10px] sm:text-xs md:text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-1 sm:space-x-2 cursor-pointer ${
+                  mode === 'no_label'
+                    ? 'bg-slate-800 text-amber-400 border border-slate-700 shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+                }`}
+              >
+                <Tag className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                <span className="truncate">MODO 3: SIN ETIQUETA</span>
               </button>
             </div>
 
@@ -669,10 +683,15 @@ export default function MainDashboard() {
                     selectedDiam={selectedDiam}
                     onVerifySuccess={handleVerifySuccess}
                   />
-                ) : (
+                ) : mode === 'search' ? (
                   <Mode2CoilSearch
                     selectedDiam={selectedDiam}
                     onVerifySuccess={handleVerifySuccess}
+                  />
+                ) : (
+                  <Mode3NoLabelView
+                    selectedDiam={selectedDiam}
+                    user={user}
                   />
                 )}
               </div>
