@@ -8,7 +8,8 @@ import Mode3NoLabelView from './Mode3NoLabelView';
 import ExportView from './ExportView';
 import AdminDashboardView from './AdminDashboardView';
 import ErrorBoundary from '../components/ErrorBoundary';
-import { LogOut, RefreshCw, Shield, Layers, Search, CheckCircle, CheckCircle2, Loader2, AlertCircle, AlertTriangle, Send, FileSpreadsheet, Settings, UploadCloud, Clock, ShieldCheck, Database, Tag } from 'lucide-react';
+import ReconciledRollsBoard from './ReconciledRollsBoard';
+import { LogOut, RefreshCw, Shield, Layers, Search, CheckCircle, CheckCircle2, Loader2, AlertCircle, AlertTriangle, Send, FileSpreadsheet, Settings, UploadCloud, Clock, ShieldCheck, Database, Tag, ClipboardList } from 'lucide-react';
 
 export default function MainDashboard() {
   const { user, operatorId, logout, checkPermission } = useAuth();
@@ -34,6 +35,10 @@ export default function MainDashboard() {
   const [dashboardError, setDashboardError] = useState('');
   const [finalizeError, setFinalizeError] = useState('');
   const [finalizeSuccessMsg, setFinalizeSuccessMsg] = useState('');
+
+  // Visor Público de Reetiquetado de Rollos
+  const [showReconciledBoard, setShowReconciledBoard] = useState(false);
+  const [reconciledCount, setReconciledCount] = useState(0);
 
   // Panel de Avance Global (Métricas exactas)
   const [metrics, setMetrics] = useState({ total: 0, verified: 0, pending: 0, efficiency: 0 });
@@ -61,10 +66,27 @@ export default function MainDashboard() {
     }
   }, [activeView, canAccessReports, canAccessAdmin]);
 
+  // Consultar conteo de rollos conciliados para el badge
+  const fetchReconciledCount = async () => {
+    try {
+      const { count, error } = await supabase
+        .from('rollos_sin_etiqueta')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'conciliado');
+
+      if (!error && count !== null) {
+        setReconciledCount(count);
+      }
+    } catch (err) {
+      console.warn('Aviso al consultar conteo de rollos conciliados:', err);
+    }
+  };
+
   // 1. Obtener diámetros y métricas en tiempo real
   useEffect(() => {
     fetchActiveDiameters(true);
     fetchMetrics();
+    fetchReconciledCount();
 
     // Suscribirse a cambios del servicio de sincronización (sheetSyncService)
     const unsubscribeSync = sheetSyncService.subscribe((event, data) => {
@@ -107,6 +129,17 @@ export default function MainDashboard() {
         },
         () => {
           fetchActiveDiameters(false);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'rollos_sin_etiqueta',
+        },
+        () => {
+          fetchReconciledCount();
         }
       )
       .subscribe();
@@ -417,6 +450,22 @@ export default function MainDashboard() {
 
             {/* Acciones Móviles (sm:hidden) */}
             <div className="flex items-center space-x-1.5 flex-shrink-0 sm:hidden">
+              {/* Botón Reetiquetado Móvil (visible para todos) */}
+              <button
+                type="button"
+                onClick={() => setShowReconciledBoard(true)}
+                className="px-2 py-1.5 bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-600/50 rounded-xl transition active:scale-95 flex items-center space-x-1 cursor-pointer text-xs font-black shadow-sm"
+                title="Tabla de Reetiquetado de Rollos"
+              >
+                <ClipboardList className="w-3.5 h-3.5 text-amber-400" />
+                <span className="text-[10px] font-black">Reetiquetar</span>
+                {reconciledCount > 0 && (
+                  <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-1.5 py-0.2 rounded-full font-mono">
+                    {reconciledCount}
+                  </span>
+                )}
+              </button>
+
               {canFinalizeTurn && (
                 <button
                   type="button"
@@ -488,6 +537,22 @@ export default function MainDashboard() {
 
             {/* Acciones en Escritorio (sm:flex) */}
             <div className="hidden sm:flex items-center space-x-2.5 flex-shrink-0">
+              {/* Botón Tabla de Reetiquetado - Accesible para todos */}
+              <button
+                type="button"
+                onClick={() => setShowReconciledBoard(true)}
+                className="p-2.5 bg-amber-950/70 hover:bg-amber-900/80 text-amber-300 border border-amber-600/50 hover:border-amber-500 rounded-xl transition duration-150 active:scale-95 flex items-center space-x-2 cursor-pointer shadow-md shadow-amber-950/30"
+                title="Ver tabla y guía de reetiquetado de rollos conciliados"
+              >
+                <ClipboardList className="w-4 h-4 text-amber-400" />
+                <span className="text-xs font-black tracking-wider">TABLA DE REETIQUETADO</span>
+                {reconciledCount > 0 && (
+                  <span className="bg-amber-500 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full font-mono">
+                    {reconciledCount}
+                  </span>
+                )}
+              </button>
+
               {canFinalizeTurn && (
                 <button
                   type="button"
@@ -923,6 +988,15 @@ export default function MainDashboard() {
           </div>
         </ErrorBoundary>
       )}
+
+      {/* Visor Público de Reetiquetado de Rollos */}
+      <ReconciledRollsBoard
+        isOpen={showReconciledBoard}
+        onClose={() => {
+          setShowReconciledBoard(false);
+          fetchReconciledCount();
+        }}
+      />
     </div>
   );
 }

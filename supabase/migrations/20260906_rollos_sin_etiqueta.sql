@@ -124,3 +124,10 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION generar_codigo_temporal_bobina TO anon, authenticated, service_role;
+
+-- 6. Estado global de importación (Inicio / Fin de jornada de descarga)
+ALTER TABLE IF EXISTS app_config
+ADD COLUMN IF NOT EXISTS importacion_activa BOOLEAN DEFAULT FALSE;
+
+-- Conceder permisos sobre app_config para anon, authenticated y service_role
+GRANT ALL ON TABLE app_config TO anon, authenticated, service_role;

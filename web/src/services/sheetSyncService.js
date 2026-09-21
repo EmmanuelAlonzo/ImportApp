@@ -111,7 +111,8 @@ export const sheetSyncService = {
     const activeSpreadsheetId = localStorage.getItem('active_spreadsheet_id') || null;
     const enrichedRecord = {
       ...record,
-      spreadsheet_id: record.spreadsheet_id || activeSpreadsheetId
+      spreadsheet_id: record.spreadsheet_id || activeSpreadsheetId,
+      codigo_temporal_origen: record.codigo_temporal_origen || null
     };
 
     // Añadir a la cola local en memoria y persistir en localStorage
@@ -164,8 +165,22 @@ export const sheetSyncService = {
 
     try {
       // 1. Invocar automáticamente la Edge Function write-verification con { sync_all_pending: true }
+      // Asegurando el reenvío de codigo_temporal_origen para la trazabilidad de reetiquetado
       const { data, error } = await supabase.functions.invoke('write-verification', {
-        body: { sync_all_pending: true }
+        body: { 
+          sync_all_pending: true,
+          records: queue.map((item) => ({
+            id: item.id,
+            colada: item.colada,
+            coil: item.coil,
+            sheet_name: item.sheet_name,
+            row_number: item.row_number,
+            is_verified: item.is_verified,
+            verified_by: item.verified_by,
+            verified_at: item.verified_at,
+            codigo_temporal_origen: item.codigo_temporal_origen || null
+          }))
+        }
       });
 
       if (error) {

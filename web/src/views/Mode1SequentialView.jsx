@@ -86,7 +86,7 @@ export default function Mode1SequentialView({ selectedDiam, onVerifySuccess }) {
 
       if (error) {
         console.error("Error al reclamar bobina atómica:", error);
-        setError("Error al reclamar bobina atómica: " + error.message);
+        setError("Error al apartar rollo: " + error.message);
         return;
       }
 
@@ -95,7 +95,7 @@ export default function Mode1SequentialView({ selectedDiam, onVerifySuccess }) {
       await fetchUpcomingRolls(coil?.id);
     } catch (err) {
       console.error('Error claiming coil atomic:', err.message);
-      setError('No se pudo reclamar la bobina en el servidor.');
+      setError('No se pudo apartar el rollo en el servidor.');
     } finally {
       isClaimingRef.current = false;
       if (showLoading) setLoading(false);
@@ -221,7 +221,7 @@ export default function Mode1SequentialView({ selectedDiam, onVerifySuccess }) {
         {loading && !currentCoil ? (
           <div className="bg-slate-800 rounded-3xl border border-slate-700 p-12 text-center flex flex-col items-center justify-center space-y-4">
             <div className="w-12 h-12 border-4 border-slate-600 border-t-emerald-500 rounded-full animate-spin"></div>
-            <p className="text-slate-400 font-bold tracking-wide">Cargando cola de bobinas...</p>
+            <p className="text-slate-400 font-bold tracking-wide">Cargando cola de rollos...</p>
           </div>
         ) : currentCoil ? (
           <div className="bg-slate-800 rounded-3xl border-2 border-emerald-500/35 hover:border-emerald-500/50 transition-all duration-350 shadow-2xl overflow-hidden flex flex-col">
@@ -241,7 +241,7 @@ export default function Mode1SequentialView({ selectedDiam, onVerifySuccess }) {
             {/* Data Specifications Grid */}
             <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-6 bg-slate-800/40">
               <div className="space-y-1">
-                <span className="text-[10px] font-bold text-slate-400 tracking-wider block">COIL / BOBINA</span>
+                <span className="text-[10px] font-bold text-slate-400 tracking-wider block">COIL / ROLLO</span>
                 <span className="text-lg font-bold text-slate-200">{currentCoil.coil || 'S/N'}</span>
               </div>
               <div className="space-y-1">

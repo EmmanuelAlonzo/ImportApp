@@ -16,6 +16,25 @@ import {
   ArrowRight
 } from 'lucide-react';
 
+// Función utilitaria para resaltar coincidencias de búsqueda en alto contraste
+function renderHighlightedText(text, query) {
+  if (!text) return '';
+  const str = String(text);
+  if (!query || !query.trim()) return str;
+  const q = query.trim();
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = str.split(new RegExp(`(${escaped})`, 'gi'));
+  return parts.map((part, i) =>
+    part.toLowerCase() === q.toLowerCase() ? (
+      <span key={i} className="text-amber-400 font-extrabold">
+        {part}
+      </span>
+    ) : (
+      part
+    )
+  );
+}
+
 export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
   const { user, operatorId: authOperatorId } = useAuth();
   const operatorId =
@@ -114,7 +133,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         .eq('sheet_name', selectedDiam)
         .eq('is_verified', false)
         .is('reserved_by', null)
-        .limit(40);
+        .limit(500);
 
       if (qErr) {
         // Fallback genérico select *
@@ -124,7 +143,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
           .eq('sheet_name', selectedDiam)
           .eq('is_verified', false)
           .is('reserved_by', null)
-          .limit(40);
+          .limit(500);
         data = res.data;
       }
 
@@ -132,7 +151,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
       const term = val.trim().toLowerCase();
       const matches = (data || []).filter((item) =>
         String(item.colada || '').toLowerCase().includes(term)
-      ).slice(0, 6);
+      ).slice(0, 50);
 
       setColadaSuggestions(matches);
       setShowColadaMenu(matches.length > 0);
@@ -156,7 +175,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
         .eq('sheet_name', selectedDiam)
         .eq('is_verified', false)
         .is('reserved_by', null)
-        .limit(40);
+        .limit(500);
 
       if (qErr) {
         const res = await supabase
@@ -165,14 +184,14 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
           .eq('sheet_name', selectedDiam)
           .eq('is_verified', false)
           .is('reserved_by', null)
-          .limit(40);
+          .limit(500);
         data = res.data;
       }
 
       const term = val.trim().toLowerCase();
       const matches = (data || []).filter((item) =>
         String(item.coil || '').toLowerCase().includes(term)
-      ).slice(0, 6);
+      ).slice(0, 50);
 
       setCoilSuggestions(matches);
       setShowCoilMenu(matches.length > 0);
@@ -247,7 +266,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
       }
     } catch (err) {
       console.error('Error al apartar bobina:', err);
-      setError('No se pudo apartar la bobina en el servidor.');
+      setError('No se pudo apartar el rollo en el servidor.');
     } finally {
       setSearching(false);
     }
@@ -487,20 +506,43 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
 
             {/* Menú Flotante de Colada */}
             {showColadaMenu && coladaSuggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-[100] bg-slate-900 border border-blue-500/40 rounded-lg shadow-2xl overflow-hidden max-h-56 overflow-y-auto">
-                {coladaSuggestions.map((item) => (
-                  <div
-                    key={item.id}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => handleSelectCoilDirect(item)}
-                    className="p-3 hover:bg-blue-600/30 cursor-pointer border-b border-slate-800 text-sm flex justify-between items-center text-slate-200"
-                  >
-                    <span>Colada: <strong>{item.colada}</strong> ➜ Coil #{item.coil}</span>
-                    <span className="text-xs bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono">
-                      {item.peso || item.peso_neto} kg
-                    </span>
+              <div className="absolute left-0 right-0 top-full mt-1.5 z-[100] max-h-80 overflow-y-auto overscroll-contain touch-pan-y rounded-xl shadow-2xl border border-slate-700 bg-slate-900/95 backdrop-blur-md divide-y divide-slate-800/80">
+                {coladaSuggestions.map((item) => {
+                  const pesoVal = item.peso || item.peso_neto;
+                  return (
+                    <div
+                      key={item.id}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => handleSelectCoilDirect(item)}
+                      className="min-h-[50px] py-3 px-4 flex items-center justify-between gap-3 hover:bg-slate-800/80 active:bg-cyan-900/40 cursor-pointer transition-colors duration-150 text-slate-200"
+                    >
+                      <div className="flex items-center space-x-3 min-w-0">
+                        <span className="bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 font-black text-base px-2.5 py-1 rounded-lg shrink-0">
+                          Rollo #{item.coil || 'S/N'}
+                        </span>
+                        <div className="flex items-baseline space-x-1.5 truncate">
+                          <span className="text-xs text-slate-400 font-bold uppercase">Colada:</span>
+                          <span className="font-bold text-slate-100 text-base">
+                            {renderHighlightedText(item.colada, searchColada)}
+                          </span>
+                          {item.lote && (
+                            <span className="text-xs text-slate-400 font-medium ml-1">
+                              (Lote {item.lote})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-slate-400 font-medium text-sm font-mono shrink-0">
+                        {pesoVal ? `${parseFloat(pesoVal).toLocaleString()} kg` : '--- kg'}
+                      </span>
+                    </div>
+                  );
+                })}
+                {coladaSuggestions.length >= 50 && (
+                  <div className="p-2.5 text-center text-[10px] text-slate-400 bg-slate-950/80 font-bold uppercase tracking-wider">
+                    Mostrando las primeras 50 coincidencias. Escribe más caracteres para afinar.
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
@@ -546,20 +588,43 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
 
             {/* Menú Flotante de Coil */}
             {showCoilMenu && coilSuggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-[100] bg-slate-900 border border-blue-500/40 rounded-lg shadow-2xl overflow-hidden max-h-56 overflow-y-auto">
-                {coilSuggestions.map((item) => (
-                  <div
-                    key={item.id}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => handleSelectCoilDirect(item)}
-                    className="p-3 hover:bg-blue-600/30 cursor-pointer border-b border-slate-800 text-sm flex justify-between items-center text-slate-200"
-                  >
-                    <span>Coil <strong>#{item.coil}</strong> ➜ Colada: {item.colada}</span>
-                    <span className="text-xs bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono">
-                      {item.peso || item.peso_neto} kg
-                    </span>
+              <div className="absolute left-0 right-0 top-full mt-1.5 z-[100] max-h-80 overflow-y-auto overscroll-contain touch-pan-y rounded-xl shadow-2xl border border-slate-700 bg-slate-900/95 backdrop-blur-md divide-y divide-slate-800/80">
+                {coilSuggestions.map((item) => {
+                  const pesoVal = item.peso || item.peso_neto;
+                  return (
+                    <div
+                      key={item.id}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => handleSelectCoilDirect(item)}
+                      className="min-h-[50px] py-3 px-4 flex items-center justify-between gap-3 hover:bg-slate-800/80 active:bg-cyan-900/40 cursor-pointer transition-colors duration-150 text-slate-200"
+                    >
+                      <div className="flex items-center space-x-3 min-w-0">
+                        <span className="bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 font-black text-base px-2.5 py-1 rounded-lg shrink-0">
+                          Rollo #{renderHighlightedText(item.coil || 'S/N', searchCoil)}
+                        </span>
+                        <div className="flex items-baseline space-x-1.5 truncate">
+                          <span className="text-xs text-slate-400 font-bold uppercase">Colada:</span>
+                          <span className="font-bold text-slate-100 text-base">
+                            {item.colada}
+                          </span>
+                          {item.lote && (
+                            <span className="text-xs text-slate-400 font-medium ml-1">
+                              (Lote {item.lote})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-slate-400 font-medium text-sm font-mono shrink-0">
+                        {pesoVal ? `${parseFloat(pesoVal).toLocaleString()} kg` : '--- kg'}
+                      </span>
+                    </div>
+                  );
+                })}
+                {coilSuggestions.length >= 50 && (
+                  <div className="p-2.5 text-center text-[10px] text-slate-400 bg-slate-950/80 font-bold uppercase tracking-wider">
+                    Mostrando las primeras 50 coincidencias. Escribe más caracteres para afinar.
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
@@ -673,7 +738,7 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
           <div className="bg-slate-950 p-5 sm:p-6 border-b border-slate-800 flex justify-between items-center">
             <div>
               <span className="text-[10px] font-black tracking-widest text-sky-400 block uppercase">
-                BOBINA APARTADA PARA TI
+                ROLLO APARTADO PARA TI
               </span>
               <span className="text-2xl sm:text-3xl font-black tracking-wider text-white">
                 Lote {selectedRoll.lote || 'S/N'}
@@ -685,10 +750,10 @@ export default function Mode2CoilSearch({ selectedDiam, onVerifySuccess }) {
                 onClick={handleCancelSelection}
                 disabled={confirming}
                 className="px-3 py-2 bg-slate-900 hover:bg-slate-850 border border-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition flex items-center space-x-1 cursor-pointer disabled:opacity-50"
-                title="Buscar otra bobina"
+                title="Buscar otro rollo"
               >
                 <X className="w-3.5 h-3.5" />
-                <span>Buscar otra bobina</span>
+                <span>Buscar otro rollo</span>
               </button>
             </div>
           </div>

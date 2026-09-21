@@ -186,11 +186,11 @@ export default function Mode3NoLabelView({ selectedDiam, user, onCreatedSuccess 
           {/* SUBTÍTULO OPERATIVO */}
           <div className="bg-amber-900/40 border border-amber-500/40 rounded-2xl py-3 px-4 max-w-lg mx-auto">
             <p className="text-xs sm:text-sm font-black text-amber-200 uppercase tracking-wide">
-              ✍️ Marca la bobina física con este código usando tiza o marcador industrial
+              ✍️ Marca el rollo físico con este código usando tiza o marcador industrial
             </p>
           </div>
 
-          {/* DETALLES DE LA BOBINA */}
+          {/* DETALLES DEL ROLLO */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-w-lg mx-auto text-left">
             <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3">
               <span className="text-[10px] font-bold text-slate-400 uppercase block">Calibre</span>
@@ -210,7 +210,7 @@ export default function Mode3NoLabelView({ selectedDiam, user, onCreatedSuccess 
             </div>
           </div>
 
-          {/* BOTÓN REGISTRAR SIGUIENTE BOBINA */}
+          {/* BOTÓN REGISTRAR SIGUIENTE ROLLO */}
           <div className="pt-2">
             <button
               type="button"
@@ -218,7 +218,7 @@ export default function Mode3NoLabelView({ selectedDiam, user, onCreatedSuccess 
               className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-sm uppercase tracking-wider rounded-2xl shadow-xl shadow-amber-500/20 transition active:scale-95 cursor-pointer flex items-center justify-center space-x-2 mx-auto"
             >
               <RotateCcw className="w-5 h-5" />
-              <span>REGISTRAR SIGUIENTE BOBINA</span>
+              <span>REGISTRAR SIGUIENTE ROLLO</span>
             </button>
           </div>
         </div>
@@ -232,7 +232,7 @@ export default function Mode3NoLabelView({ selectedDiam, user, onCreatedSuccess 
             <div className="flex items-center space-x-2">
               <Tag className="w-5 h-5 text-amber-400" />
               <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-wider">
-                Recepción de Bobinas sin Etiqueta / Rezagos
+                Recepción de Rollos sin Etiqueta / Rezagos
               </h3>
             </div>
             <span className="text-[10px] text-slate-400 font-bold bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700/60 self-start sm:self-auto">
@@ -299,7 +299,7 @@ export default function Mode3NoLabelView({ selectedDiam, user, onCreatedSuccess 
           <div className="flex items-center space-x-2">
             <Clock className="w-4 h-4 text-amber-400" />
             <h4 className="text-xs font-black text-slate-300 uppercase tracking-wider">
-              Bobinas Temporales Pendientes de Conciliar ({recentPending.length})
+              ROLLOS PENDIENTES DE REETIQUETAR ({recentPending.length})
             </h4>
           </div>
           <div className="flex items-center space-x-2">
@@ -320,11 +320,11 @@ export default function Mode3NoLabelView({ selectedDiam, user, onCreatedSuccess 
         {loadingList ? (
           <div className="py-6 flex items-center justify-center space-x-2 text-slate-400 text-xs font-bold">
             <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-            <span>Consultando bobinas pendientes...</span>
+            <span>Consultando rollos pendientes...</span>
           </div>
         ) : recentPending.length === 0 ? (
           <div className="py-6 text-center text-slate-500 text-xs font-bold uppercase tracking-wider">
-            No hay bobinas sin etiqueta pendientes para este calibre.
+            No hay rollos sin etiqueta pendientes para este calibre.
           </div>
         ) : (
           <div className="overflow-x-auto">

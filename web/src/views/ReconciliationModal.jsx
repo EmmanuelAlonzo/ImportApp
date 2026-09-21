@@ -194,7 +194,7 @@ export default function ReconciliationModal({
     const validMatches = matches.filter((m) => m.matchedCoilId);
 
     if (validMatches.length === 0) {
-      setError('No hay ninguna bobina emparejada para conciliar.');
+      setError('No hay ningún rollo emparejado para conciliar.');
       return;
     }
 
@@ -263,7 +263,7 @@ export default function ReconciliationModal({
         } catch (_) {}
       }
 
-      setSuccessMsg(`¡${validMatches.length} bobina(s) conciliada(s) y reetiquetada(s) con éxito!`);
+      setSuccessMsg(`¡${validMatches.length} rollo(s) conciliado(s) y reetiquetado(s) con éxito!`);
 
       if (onSuccess) {
         onSuccess(validMatches);
@@ -297,13 +297,13 @@ export default function ReconciliationModal({
             </div>
             <div>
               <h2 className="text-sm sm:text-base font-black text-white uppercase tracking-wider flex items-center gap-2">
-                Conciliación y Tabla de Equivalencias
+                Conciliación y Reetiquetado de Rollos
                 <span className="text-[10px] bg-slate-800 text-amber-400 px-2 py-0.5 rounded-lg border border-amber-500/30 font-mono">
                   {selectedDiam}
                 </span>
               </h2>
               <p className="text-xs text-slate-400 font-medium">
-                Asigna a cada código temporal su bobina oficial del manifiesto de importación.
+                Asigna a cada código temporal su rollo oficial del manifiesto de importación.
               </p>
             </div>
           </div>
@@ -322,7 +322,7 @@ export default function ReconciliationModal({
           <div className="bg-amber-950/70 border-b border-amber-500/50 px-4 py-3 flex items-center space-x-2.5 text-amber-200 text-xs font-bold">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
             <span>
-              Atención: Hay más rollos físicos ({pendingNoLabel.length}) que registros pendientes en el manifiesto ({availableCoils.length}). Solo se podrán conciliar las bobinas con cupo oficial.
+              Atención: Hay más rollos físicos ({pendingNoLabel.length}) que registros pendientes en el manifiesto ({availableCoils.length}). Solo se podrán conciliar los rollos con cupo oficial.
             </span>
           </div>
         )}
@@ -357,7 +357,7 @@ export default function ReconciliationModal({
                 <CheckCircle2 className="w-6 h-6" />
               </div>
               <p className="text-sm font-bold text-slate-300">
-                No hay bobinas sin etiqueta pendientes para este calibre.
+                No hay rollos sin etiqueta pendientes para este calibre.
               </p>
               <p className="text-xs text-slate-500">
                 Todos los rollos físicos registrados en patio ya han sido conciliados con el manifiesto.
@@ -373,7 +373,7 @@ export default function ReconciliationModal({
                       <th className="py-3 px-3">Código Temporal</th>
                       <th className="py-3 px-3">Peso Báscula Patio</th>
                       <th className="py-3 px-2 text-center">➜</th>
-                      <th className="py-3 px-3">Bobina Manifiesto (Colada / Coil)</th>
+                      <th className="py-3 px-3">Rollo Manifiesto (Colada / Coil)</th>
                       <th className="py-3 px-3">Peso Teórico</th>
                       <th className="py-3 px-3 text-right">Diferencia de Peso</th>
                     </tr>
@@ -485,9 +485,9 @@ export default function ReconciliationModal({
         {/* Footer */}
         <div className="p-4 sm:p-6 border-t border-slate-800 bg-slate-950/80 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="text-xs text-slate-400 font-bold">
-            Emparejadas:{' '}
+            Emparejados:{' '}
             <strong className="text-emerald-400 font-mono">{validMatchesCount}</strong> de{' '}
-            <span className="font-mono">{pendingNoLabel.length}</span> bobinas temporales
+            <span className="font-mono">{pendingNoLabel.length}</span> rollos temporales
           </div>
 
           <div className="flex items-center space-x-3 w-full sm:w-auto">
@@ -509,7 +509,7 @@ export default function ReconciliationModal({
               {saving ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
-                  <span>CONCILIANDO {validMatchesCount} BOBINAS...</span>
+                  <span>CONCILIANDO {validMatchesCount} ROLLOS...</span>
                 </>
               ) : (
                 <>
