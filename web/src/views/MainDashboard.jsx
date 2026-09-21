@@ -9,7 +9,7 @@ import ExportView from './ExportView';
 import AdminDashboardView from './AdminDashboardView';
 import ErrorBoundary from '../components/ErrorBoundary';
 import ReconciledRollsBoard from './ReconciledRollsBoard';
-import { LogOut, RefreshCw, Shield, Layers, Search, CheckCircle, CheckCircle2, Loader2, AlertCircle, AlertTriangle, Send, FileSpreadsheet, Settings, UploadCloud, Clock, ShieldCheck, Database, Tag, ClipboardList } from 'lucide-react';
+import { LogOut, RefreshCw, Shield, Layers, Search, CheckCircle, CheckCircle2, Loader2, AlertCircle, AlertTriangle, Send, FileSpreadsheet, Settings, UploadCloud, Clock, ShieldCheck, Database, Tag, ClipboardList, Play, Square } from 'lucide-react';
 
 export default function MainDashboard() {
   const { user, operatorId, logout, checkPermission } = useAuth();
@@ -36,6 +36,9 @@ export default function MainDashboard() {
   const [finalizeError, setFinalizeError] = useState('');
   const [finalizeSuccessMsg, setFinalizeSuccessMsg] = useState('');
 
+  // Estado Global de Importación
+  const [importacionActiva, setImportacionActiva] = useState(true);
+
   // Visor Público de Reetiquetado de Rollos
   const [showReconciledBoard, setShowReconciledBoard] = useState(false);
   const [reconciledCount, setReconciledCount] = useState(0);
@@ -55,6 +58,7 @@ export default function MainDashboard() {
   const canFinalizeTurn = isVerificador || isSupervisor || isAdmin;
   const isAdminOrSupervisor = isSupervisor || isAdmin;
   const canAccessAdmin = isAdmin;
+  const canControlImport = ['ADMIN', 'ADMINISTRADOR', 'SUPERVISOR'].includes((user?.rol || user?.role || '').toUpperCase());
 
   // Redirección de seguridad si la vista activa no está permitida para el rol
   useEffect(() => {
@@ -65,6 +69,55 @@ export default function MainDashboard() {
       setActiveView('verification');
     }
   }, [activeView, canAccessReports, canAccessAdmin]);
+
+  // Consultar estado global de importación desde app_config
+  const fetchImportStatus = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('app_config')
+        .select('importacion_activa')
+        .eq('id', 1)
+        .maybeSingle();
+
+      if (!error && data && data.importacion_activa !== undefined && data.importacion_activa !== null) {
+        setImportacionActiva(Boolean(data.importacion_activa));
+      }
+    } catch (err) {
+      console.warn('Aviso al consultar importacion_activa en app_config:', err);
+    }
+  };
+
+  // Alternar estado global de importación con confirmación inmediata
+  const toggleEstadoImportacion = async () => {
+    const confirmMsg = importacionActiva
+      ? '¿Deseas finalizar la jornada de importación? Los operarios no podrán registrar más rollos.'
+      : '¿Iniciar jornada de importación para habilitar el registro en planta?';
+
+    if (!window.confirm(confirmMsg)) return;
+
+    const nuevoEstado = !importacionActiva;
+    setImportacionActiva(nuevoEstado);
+
+    try {
+      const { error } = await supabase
+        .from('app_config')
+        .upsert({
+          id: 1,
+          importacion_activa: nuevoEstado,
+          updated_at: new Date().toISOString()
+        });
+
+      if (error) {
+        console.error('Error al actualizar importacion_activa en app_config:', error);
+        setImportacionActiva(!nuevoEstado);
+        setDashboardError('Error al actualizar estado de importación: ' + error.message);
+      }
+    } catch (err) {
+      console.error('Excepción al actualizar estado de importación:', err);
+      setImportacionActiva(!nuevoEstado);
+      setDashboardError('Error de red al actualizar estado de importación.');
+    }
+  };
 
   // Consultar conteo de rollos conciliados para el badge
   const fetchReconciledCount = async () => {
@@ -86,6 +139,7 @@ export default function MainDashboard() {
   useEffect(() => {
     fetchActiveDiameters(true);
     fetchMetrics();
+    fetchImportStatus();
     fetchReconciledCount();
 
     // Suscribirse a cambios del servicio de sincronización (sheetSyncService)
@@ -129,6 +183,19 @@ export default function MainDashboard() {
         },
         () => {
           fetchActiveDiameters(false);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'app_config',
+        },
+        (payload) => {
+          if (payload.new && payload.new.importacion_activa !== undefined) {
+            setImportacionActiva(Boolean(payload.new.importacion_activa));
+          }
         }
       )
       .on(
@@ -466,6 +533,31 @@ export default function MainDashboard() {
                 )}
               </button>
 
+              {/* Botón Iniciar / Finalizar Importación (Móvil) */}
+              {canControlImport && (
+                !importacionActiva ? (
+                  <button
+                    type="button"
+                    onClick={toggleEstadoImportacion}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] uppercase tracking-wider transition-all shadow-md cursor-pointer"
+                    title="Iniciar Importación"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-white" />
+                    <span>Iniciar</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={toggleEstadoImportacion}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white font-bold text-[10px] uppercase tracking-wider transition-all shadow-md cursor-pointer"
+                    title="Finalizar Importación"
+                  >
+                    <Square className="w-3.5 h-3.5 fill-white" />
+                    <span>Fin Imp.</span>
+                  </button>
+                )
+              )}
+
               {canFinalizeTurn && (
                 <button
                   type="button"
@@ -552,6 +644,27 @@ export default function MainDashboard() {
                   </span>
                 )}
               </button>
+
+              {/* Botón Iniciar / Finalizar Importación (Escritorio) */}
+              {canControlImport && (
+                !importacionActiva ? (
+                  <button
+                    type="button"
+                    onClick={toggleEstadoImportacion}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-emerald-950/50 cursor-pointer"
+                  >
+                    <Play className="w-4 h-4 fill-white" /> Iniciar Importación
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={toggleEstadoImportacion}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-600 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-rose-950/50 cursor-pointer"
+                  >
+                    <Square className="w-4 h-4 fill-white" /> Finalizar Importación
+                  </button>
+                )
+              )}
 
               {canFinalizeTurn && (
                 <button
@@ -651,9 +764,12 @@ export default function MainDashboard() {
         {activeView === 'verification' && (
           <div className="space-y-4 sm:space-y-6 flex-1 flex flex-col justify-start max-w-full">
             {/* Selector de Modos (Tabs) con liberación atómica */}
-            <div className="bg-slate-950 p-1 rounded-2xl border border-slate-850 grid grid-cols-3 gap-1 sm:gap-2 shadow-inner">
+            <div className={`bg-slate-950 p-1 rounded-2xl border border-slate-850 grid grid-cols-3 gap-1 sm:gap-2 shadow-inner transition-opacity ${
+              !importacionActiva ? 'opacity-40 pointer-events-none select-none' : ''
+            }`}>
               <button
                 type="button"
+                disabled={!importacionActiva}
                 onClick={() => handleModeChange('sequential')}
                 className={`py-2 sm:py-3.5 rounded-xl text-[10px] sm:text-xs md:text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-1 sm:space-x-2 cursor-pointer ${
                   mode === 'sequential'
@@ -667,6 +783,7 @@ export default function MainDashboard() {
               
               <button
                 type="button"
+                disabled={!importacionActiva}
                 onClick={() => handleModeChange('search')}
                 className={`py-2 sm:py-3.5 rounded-xl text-[10px] sm:text-xs md:text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-1 sm:space-x-2 cursor-pointer ${
                   mode === 'search'
@@ -680,6 +797,7 @@ export default function MainDashboard() {
 
               <button
                 type="button"
+                disabled={!importacionActiva}
                 onClick={() => handleModeChange('no_label')}
                 className={`py-2 sm:py-3.5 rounded-xl text-[10px] sm:text-xs md:text-sm font-black tracking-wider transition-all duration-150 flex items-center justify-center space-x-1 sm:space-x-2 cursor-pointer ${
                   mode === 'no_label'
@@ -692,147 +810,177 @@ export default function MainDashboard() {
               </button>
             </div>
 
-            {/* Selector de Diámetro Activo */}
-            <div className="space-y-2 sm:space-y-3 max-w-full">
-              <div className="flex justify-between items-center">
-                <h2 className="text-xs font-bold text-slate-400 tracking-widest uppercase flex items-center">
-                  <Layers className="w-4 h-4 mr-2 text-sky-400" />
-                  Diámetro Activo Seleccionado
-                </h2>
-                <button
-                  onClick={() => fetchActiveDiameters(false)}
-                  className="p-1 text-slate-400 hover:text-white rounded transition duration-150"
-                  title="Refrescar diámetros"
-                  disabled={loadingDiams}
-                >
-                  <RefreshCw className={`w-4 h-4 ${loadingDiams ? 'animate-spin text-sky-400' : ''}`} />
-                </button>
-              </div>
-
-              {(!diameters || diameters.length === 0) ? (
-                <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 text-center text-slate-400 font-bold text-sm">
-                  Sin registros pendientes de verificación en planta.
+            {!importacionActiva ? (
+              <div className="bg-slate-900/90 border-2 border-amber-500/50 rounded-3xl p-8 sm:p-12 text-center space-y-6 shadow-2xl animate-in fade-in zoom-in-95 duration-200 my-auto">
+                <div className="w-16 h-16 bg-amber-950/70 border border-amber-500/50 rounded-full flex items-center justify-center mx-auto text-amber-400 animate-pulse">
+                  <AlertTriangle className="w-8 h-8" />
                 </div>
-              ) : (
-                <div
-                  className="flex space-x-2 sm:space-x-3 overflow-x-auto scrollbar-none flex-nowrap px-1 py-1.5 max-w-full touch-pan-x overscroll-contain"
-                  style={{
-                    overflowX: 'auto',
-                    touchAction: 'pan-x',
-                    WebkitOverflowScrolling: 'touch',
-                  }}
-                >
-                  {diameters.map((d) => (
+                <div className="space-y-2 max-w-lg mx-auto">
+                  <h3 className="text-base sm:text-lg font-black text-amber-300 uppercase tracking-wider">
+                    IMPORTACIÓN CERRADA / PAUSADA
+                  </h3>
+                  <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-medium">
+                    ⚠️ IMPORTACIÓN CERRADA / PAUSADA. Esperando a que un Supervisor o Administrador inicie la jornada de descarga.
+                  </p>
+                </div>
+                {canControlImport && (
+                  <div className="pt-2">
                     <button
-                      key={d}
                       type="button"
-                      onClick={() => setSelectedDiam(d)}
-                      className={`px-4 sm:px-6 py-2 sm:py-3 rounded-full text-xs sm:text-sm font-black tracking-wider transition-all border whitespace-nowrap active:scale-95 cursor-pointer flex-shrink-0 ${
-                        selectedDiam === d
-                          ? 'bg-sky-500 text-slate-900 border-sky-400 font-extrabold shadow-lg shadow-sky-500/20'
-                          : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-750 hover:text-white'
-                      }`}
+                      onClick={toggleEstadoImportacion}
+                      className="px-8 py-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-widest rounded-2xl shadow-xl shadow-emerald-500/20 transition active:scale-95 cursor-pointer flex items-center justify-center space-x-2 mx-auto"
                     >
-                      {d.toUpperCase().includes('MM') ? d : `${d} MM`}
+                      <Play className="w-5 h-5 fill-slate-950" />
+                      <span>INICIAR IMPORTACIÓN</span>
                     </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Renderizado de Vistas según Modo */}
-            {selectedDiam ? (
-              <div className="flex-grow flex flex-col justify-center py-4">
-                {mode === 'sequential' ? (
-                  <Mode1SequentialView
-                    selectedDiam={selectedDiam}
-                    onVerifySuccess={handleVerifySuccess}
-                  />
-                ) : mode === 'search' ? (
-                  <Mode2CoilSearch
-                    selectedDiam={selectedDiam}
-                    onVerifySuccess={handleVerifySuccess}
-                  />
-                ) : (
-                  <Mode3NoLabelView
-                    selectedDiam={selectedDiam}
-                    user={user}
-                  />
+                  </div>
                 )}
               </div>
             ) : (
-              <div className="flex-1 flex flex-col justify-center items-center py-16 text-slate-500 font-bold text-sm uppercase">
-                Selecciona o refresca un diámetro activo para operar.
-              </div>
-            )}
+              <>
+                {/* Selector de Diámetro Activo */}
+                <div className="space-y-2 sm:space-y-3 max-w-full">
+                  <div className="flex justify-between items-center">
+                    <h2 className="text-xs font-bold text-slate-400 tracking-widest uppercase flex items-center">
+                      <Layers className="w-4 h-4 mr-2 text-sky-400" />
+                      Diámetro Activo Seleccionado
+                    </h2>
+                    <button
+                      onClick={() => fetchActiveDiameters(false)}
+                      className="p-1 text-slate-400 hover:text-white rounded transition duration-150"
+                      title="Refrescar diámetros"
+                      disabled={loadingDiams}
+                    >
+                      <RefreshCw className={`w-4 h-4 ${loadingDiams ? 'animate-spin text-sky-400' : ''}`} />
+                    </button>
+                  </div>
 
-            {/* Historial Compartido del Turno (Solo visible en pestaña Verificación) */}
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <h2 className="text-xs font-bold text-slate-400 tracking-widest uppercase">
-                  AUDITADOS EN ESTE TURNO ({history?.length ?? 0})
-                </h2>
-                {(queueLength ?? 0) > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => sheetSyncService.flushQueue()}
-                    className="text-xs font-black text-yellow-400 hover:text-yellow-350 tracking-wider flex items-center space-x-1 transition"
-                  >
-                    <span>FORZAR SINCRONIZACIÓN</span>
-                    <RefreshCw className="w-3.5 h-3.5 ml-1 animate-spin" />
-                  </button>
-                )}
-              </div>
-              
-              <div className="bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden">
-                {(!history || history.length === 0) ? (
-                  <div className="p-8 text-center text-xs text-slate-500 font-bold uppercase tracking-wider">
-                    Ningún rollo verificado en este turno todavía.
+                  {(!diameters || diameters.length === 0) ? (
+                    <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 text-center text-slate-400 font-bold text-sm">
+                      Sin registros pendientes de verificación en planta.
+                    </div>
+                  ) : (
+                    <div
+                      className="flex space-x-2 sm:space-x-3 overflow-x-auto scrollbar-none flex-nowrap px-1 py-1.5 max-w-full touch-pan-x overscroll-contain"
+                      style={{
+                        overflowX: 'auto',
+                        touchAction: 'pan-x',
+                        WebkitOverflowScrolling: 'touch',
+                      }}
+                    >
+                      {diameters.map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setSelectedDiam(d)}
+                          className={`px-4 sm:px-6 py-2 sm:py-3 rounded-full text-xs sm:text-sm font-black tracking-wider transition-all border whitespace-nowrap active:scale-95 cursor-pointer flex-shrink-0 ${
+                            selectedDiam === d
+                              ? 'bg-sky-500 text-slate-900 border-sky-400 font-extrabold shadow-lg shadow-sky-500/20'
+                              : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-750 hover:text-white'
+                          }`}
+                        >
+                          {d.toUpperCase().includes('MM') ? d : `${d} MM`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Renderizado de Vistas según Modo */}
+                {selectedDiam ? (
+                  <div className="flex-grow flex flex-col justify-center py-4">
+                    {mode === 'sequential' ? (
+                      <Mode1SequentialView
+                        selectedDiam={selectedDiam}
+                        onVerifySuccess={handleVerifySuccess}
+                      />
+                    ) : mode === 'search' ? (
+                      <Mode2CoilSearch
+                        selectedDiam={selectedDiam}
+                        onVerifySuccess={handleVerifySuccess}
+                      />
+                    ) : (
+                      <Mode3NoLabelView
+                        selectedDiam={selectedDiam}
+                        user={user}
+                      />
+                    )}
                   </div>
                 ) : (
-                  <div
-                    className="divide-y divide-slate-900 max-h-60 sm:max-h-72 overflow-y-auto touch-pan-y overscroll-contain"
-                    style={{
-                      overflowY: 'auto',
-                      touchAction: 'pan-y',
-                      WebkitOverflowScrolling: 'touch',
-                    }}
-                  >
-                    {history.map((h, i) => (
-                      <div key={i} className="p-4 flex items-center justify-between hover:bg-slate-900/50 transition">
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <span className="font-bold text-white text-sm tracking-wide">{h.lote}</span>
-                            {/* Estado de Sincronización en Badge */}
-                            {h.syncStatus === 'synced' ? (
-                              <span className="text-[9px] font-black px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 flex items-center space-x-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                                <span>Sincronizado ✔</span>
-                              </span>
-                            ) : (
-                              <span className="text-[9px] font-black px-2 py-0.5 rounded bg-yellow-950/60 border border-yellow-500/35 text-yellow-400 animate-pulse">
-                                Pendiente sincronizar
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-[10px] text-slate-400">
-                            {h.sheet_name} MM | {h.sae || 'SAE'} | COIL: {h.coil || 'S/N'}
-                          </span>
-                        </div>
-                        <div className="text-right">
-                          <span className="font-black text-slate-200 text-sm block">
-                            {h.peso ? parseFloat(h.peso).toLocaleString() : '0.00'} KG
-                          </span>
-                          <span className="text-[9px] text-slate-500 font-mono">
-                            {new Date(h.verified_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
+                  <div className="flex-1 flex flex-col justify-center items-center py-16 text-slate-500 font-bold text-sm uppercase">
+                    Selecciona o refresca un diámetro activo para operar.
                   </div>
                 )}
-              </div>
-            </div>
+
+                {/* Historial Compartido del Turno (Solo visible en pestaña Verificación) */}
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <h2 className="text-xs font-bold text-slate-400 tracking-widest uppercase">
+                      AUDITADOS EN ESTE TURNO ({history?.length ?? 0})
+                    </h2>
+                    {(queueLength ?? 0) > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => sheetSyncService.flushQueue()}
+                        className="text-xs font-black text-yellow-400 hover:text-yellow-350 tracking-wider flex items-center space-x-1 transition"
+                      >
+                        <span>FORZAR SINCRONIZACIÓN</span>
+                        <RefreshCw className="w-3.5 h-3.5 ml-1 animate-spin" />
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className="bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden">
+                    {(!history || history.length === 0) ? (
+                      <div className="p-8 text-center text-xs text-slate-500 font-bold uppercase tracking-wider">
+                        Ningún rollo verificado en este turno todavía.
+                      </div>
+                    ) : (
+                      <div
+                        className="divide-y divide-slate-900 max-h-60 sm:max-h-72 overflow-y-auto touch-pan-y overscroll-contain"
+                        style={{
+                          overflowY: 'auto',
+                          touchAction: 'pan-y',
+                          WebkitOverflowScrolling: 'touch',
+                        }}
+                      >
+                        {history.map((h, i) => (
+                          <div key={i} className="p-4 flex items-center justify-between hover:bg-slate-900/50 transition">
+                            <div>
+                              <div className="flex items-center space-x-2">
+                                <span className="font-bold text-white text-sm tracking-wide">{h.lote}</span>
+                                {/* Estado de Sincronización en Badge */}
+                                {h.syncStatus === 'synced' ? (
+                                  <span className="text-[9px] font-black px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 flex items-center space-x-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                    <span>Sincronizado ✔</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-black px-2 py-0.5 rounded bg-yellow-950/60 border border-yellow-500/35 text-yellow-400 animate-pulse">
+                                    Pendiente sincronizar
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-slate-400">
+                                {h.sheet_name} MM | {h.sae || 'SAE'} | COIL: {h.coil || 'S/N'}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="font-black text-slate-200 text-sm block">
+                                {h.peso ? parseFloat(h.peso).toLocaleString() : '0.00'} KG
+                              </span>
+                              <span className="text-[9px] text-slate-500 font-mono">
+                                {new Date(h.verified_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
 
